@@ -287,6 +287,13 @@ config_string(
     UNQUOTE
 )
 
+config_string(
+    KernelSignalFastpath SIGNAL_FASTPATH
+    "Enable notification signal fastpath"
+    DEFAULT OFF
+    DEPENDS "KernelIsMCS" UNDEF_DISABLED
+)
+
 find_file(
     KernelDomainSchedule default_domain.c
     PATHS src/config
