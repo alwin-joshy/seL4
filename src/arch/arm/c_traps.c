@@ -62,29 +62,50 @@ void VISIBLE NORETURN c_handle_enfp(void)
 }
 #endif /* CONFIG_HAVE_FPU */
 
-static inline void NORETURN c_handle_vm_fault(vm_fault_type_t type)
+static inline void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 {
-    NODE_LOCK_SYS;
-    c_entry_hook();
-
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.path = Entry_VMFault;
     ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
 #endif
 
     handleVMFaultEvent(type);
+
     restore_user_context();
+    UNREACHABLE();
+}
+
+void NORETURN c_handle_fastpath_vm_fault(vm_fault_type_t type) {
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.path = Entry_VMFault;
+    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+    ksKernelEntry.is_fastpath = 1;
+#endif
+
+    fastpath_vm_fault(type);
     UNREACHABLE();
 }
 
 void VISIBLE NORETURN c_handle_data_fault(void)
 {
-    c_handle_vm_fault(seL4_DataFault);
+    NODE_LOCK_SYS;
+    c_entry_hook();
+#ifdef CONFIG_FASTPATH
+    c_handle_fastpath_vm_fault(seL4_DataFault);
+#else
+    vm_fault_slowpath(seL4_DataFault);
+#endif
 }
 
 void VISIBLE NORETURN c_handle_instruction_fault(void)
 {
-    c_handle_vm_fault(seL4_InstructionFault);
+    NODE_LOCK_SYS;
+    c_entry_hook();
+#ifdef CONFIG_FASTPATH
+    c_handle_fastpath_vm_fault(seL4_InstructionFault);
+#else
+    vm_fault_slowpath(seL4_InstructionFault);
+#endif
 }
 
 void VISIBLE NORETURN c_handle_interrupt(void)
