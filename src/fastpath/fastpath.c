@@ -21,6 +21,262 @@ static inline
 FORCE_INLINE
 #endif
 #endif
+void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
+    cptr_t handlerCPtr;
+    cap_t handler_cap;
+    endpoint_t *ep_ptr;
+    tcb_t *dest;
+    cap_t newVTable;
+    vspace_root_t *cap_pd;
+    word_t badge;
+    seL4_MessageInfo_t info;
+    word_t msgInfo;
+    pde_t stored_hw_asid;
+    dom_t dom;
+
+
+
+    handlerCPtr = NODE_STATE(ksCurThread)->tcbFaultHandler;
+    handler_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap, handlerCPtr);
+
+    //handler_cap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbFaultHandler)->cap;
+
+    if (unlikely(!cap_capType_equals(handler_cap, cap_endpoint_cap) ||
+        !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
+        vm_fault_slowpath(type);
+    }
+
+    /* Get the endpoint address */
+    ep_ptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(handler_cap));
+
+    /* Get the destination thread, which is only going to be valid
+    * if the endpoint is valid. */
+    dest = TCB_PTR(endpoint_ptr_get_epQueue_head(ep_ptr));
+
+    //TODO: Check this is right
+    if (!dest) {
+        vm_fault_slowpath(type);
+    }
+
+    /* Check that there's a thread waiting to receive */
+    if (unlikely(endpoint_ptr_get_state(ep_ptr) != EPState_Recv)) {
+        vm_fault_slowpath(type);
+        userError("here");
+    }
+
+/* ensure we are not single stepping the destination in ia32 */
+    #if defined(CONFIG_HARDWARE_DEBUG_API) && defined(CONFIG_ARCH_IA32)
+    if (unlikely(dest->tcbArch.tcbContext.breakpointState.single_step_enabled)) {
+        vm_fault_slowpath(type);
+    }
+    #endif
+
+    /* Get destination thread.*/
+    newVTable = TCB_PTR_CTE_PTR(dest, tcbVTable)->cap;
+
+    /* Get vspace root. */
+    cap_pd = cap_vtable_cap_get_vspace_root_fp(newVTable);
+
+    /* Ensure that the destination has a valid VTable. */
+    if (unlikely(! isValidVTableRoot_fp(newVTable))) {
+        vm_fault_slowpath(type);
+    }
+
+
+#ifdef CONFIG_ARCH_AARCH32
+    /* Get HW ASID */
+        stored_hw_asid = cap_pd[PD_ASID_SLOT];
+#endif
+
+#ifdef CONFIG_ARCH_X86_64
+    /* borrow the stored_hw_asid for PCID */
+        stored_hw_asid.words[0] = cap_pml4_cap_get_capPML4MappedASID_fp(newVTable);
+#endif
+
+#ifdef CONFIG_ARCH_IA32
+    /* stored_hw_asid is unused on ia32 fastpath, but gets passed into a function below. */
+        stored_hw_asid.words[0] = 0;
+#endif
+#ifdef CONFIG_ARCH_AARCH64
+    stored_hw_asid.words[0] = cap_vtable_root_get_mappedASID(newVTable);
+#endif
+
+#ifdef CONFIG_ARCH_RISCV
+    /* Get HW ASID */
+        stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
+#endif
+
+    /* let gcc optimise this out for 1 domain */
+    dom = maxDom ? ksCurDomain : 0;
+    /* ensure only the idle thread or lower prio threads are present in the scheduler */
+    if (unlikely(dest->tcbPriority < NODE_STATE(ksCurThread->tcbPriority) &&
+        !isHighestPrio(dom, dest->tcbPriority))) {
+
+        vm_fault_slowpath(type);
+    }
+
+    userError("here2");
+
+    /* Ensure that the endpoint has has grant or grant-reply rights so that we can
+    * create the reply cap */
+    if (unlikely(!cap_endpoint_cap_get_capCanGrant(handler_cap) &&
+        !cap_endpoint_cap_get_capCanGrantReply(handler_cap))) {
+        vm_fault_slowpath(type);
+    }
+
+#ifdef CONFIG_ARCH_AARCH32
+    if (unlikely(!pde_pde_invalid_get_stored_asid_valid(stored_hw_asid))) {
+        vm_fault_slowpath(type);
+    }
+#endif
+
+    /* Ensure the original caller is in the current domain and can be scheduled directly. */
+    if (unlikely(dest->tcbDomain != ksCurDomain && 0 < maxDom)) {
+        vm_fault_slowpath(type);
+    }
+
+#ifdef CONFIG_KERNEL_MCS
+    if (unlikely(dest->tcbSchedContext != NULL)) {
+        //userError("went into slowpath here 1\n");
+        vm_fault_slowpath(type);
+    }
+
+    reply_t *reply = thread_state_get_replyObject_np(dest->tcbState);
+    if (unlikely(reply == NULL)) {
+        //userError("went into slowpath here 1\n");
+        vm_fault_slowpath(type);
+    }
+#endif
+
+#ifdef ENABLE_SMP_SUPPORT
+    /* Ensure both threads have the same affinity */
+    if (unlikely(NODE_STATE(ksCurThread)->tcbAffinity != dest->tcbAffinity)) {
+        vm_fault_slowpath(type);
+    }
+#endif /* ENABLE_SMP_SUPPORT */
+
+    /*
+     * --- POINT OF NO RETURN ---
+     *
+     * At this stage, we have committed to performing the IPC.
+     */
+
+#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
+    ksKernelEntry.is_fastpath = true;
+#endif
+
+    /* Dequeue the destination. */
+    endpoint_ptr_set_epQueue_head_np(ep_ptr, TCB_REF(dest->tcbEPNext));
+    if (unlikely(dest->tcbEPNext)) {
+        dest->tcbEPNext->tcbEPPrev = NULL;
+    } else {
+        endpoint_ptr_mset_epQueue_tail_state(ep_ptr, 0, EPState_Idle);
+    }
+
+    badge = cap_endpoint_cap_get_capEPBadge(handler_cap);
+
+    /* Unlink dest <-> reply, link src (cur thread) <-> reply */
+    thread_state_ptr_set_tsType_np(&NODE_STATE(ksCurThread)->tcbState, ThreadState_BlockedOnReply);
+#ifdef CONFIG_KERNEL_MCS
+
+    thread_state_ptr_set_replyObject_np(&dest->tcbState, 0);
+    thread_state_ptr_set_replyObject_np(&NODE_STATE(ksCurThread)->tcbState, REPLY_REF(reply));
+    reply->replyTCB = NODE_STATE(ksCurThread);
+
+    sched_context_t *sc = NODE_STATE(ksCurThread)->tcbSchedContext;
+    sc->scTcb = dest;
+    dest->tcbSchedContext = sc;
+    NODE_STATE(ksCurThread)->tcbSchedContext = NULL;
+
+    reply_t *old_caller = sc->scReply;
+    reply->replyPrev = call_stack_new(REPLY_REF(sc->scReply), false);
+    if (unlikely(old_caller)) {
+        old_caller->replyNext = call_stack_new(REPLY_REF(reply), false);
+    }
+    reply->replyNext = call_stack_new(SC_REF(sc), true);
+    sc->scReply = reply;
+#else
+    /* Get sender reply slot */
+    cte_t *replySlot = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbReply);
+
+    /* Get dest caller slot */
+    cte_t *callerSlot = TCB_PTR_CTE_PTR(dest, tcbCaller);
+
+    /* Insert reply cap */
+    word_t replyCanGrant = thread_state_ptr_get_blockingIPCCanGrant(&dest->tcbState);;
+    cap_reply_cap_ptr_new_np(&callerSlot->cap, replyCanGrant, 0,
+    TCB_REF(NODE_STATE(ksCurThread)));
+    mdb_node_ptr_set_mdbPrev_np(&callerSlot->cteMDBNode, CTE_REF(replySlot));
+    mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
+    &replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
+#endif
+
+#ifdef CONFIG_ARCH_AARCH64
+    switch (type) {
+        case ARMDataAbort: {
+            word_t addr, fault;
+
+            addr = getFAR();
+            fault = getDFSR();
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+            /* use the IPA */
+            if (ARCH_NODE_STATE(armHSVCPUActive)) {
+                addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
+            }
+#endif
+            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+            break;
+        }
+
+        case ARMPrefetchAbort: {
+            word_t pc, fault;
+
+            pc = getRestartPC(NODE_STATE(ksCurThread));
+            fault = getIFSR();
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+            if (ARCH_NODE_STATE(armHSVCPUActive)) {
+                pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
+            }
+#endif
+            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
+            break;
+        }
+    }
+#endif
+
+#ifdef CONFIG_ARCH_ARM
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+    word_t ipa, va;
+    va = getRestartPC(NODE_STATE(ksCurThread));
+    ipa = (addressTranslateS1CPR(va) & ~MASK(PAGE_BITS)) | (va & MASK(PAGE_BITS));
+    setRegister(dest, seL4_VMFault_IP, ipa);
+#else
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread)));
+#endif
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
+#endif
+
+    info = seL4_MessageInfo_new(seL4_Fault_get_seL4_FaultType(NODE_STATE(ksCurThread)->tcbFault), 0, 0, 4);
+
+    thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
+    switchToThread_fp(dest, cap_pd, stored_hw_asid);
+    msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
+
+    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+}
+
+
+#ifdef CONFIG_ARCH_ARM
+static inline
+#ifndef CONFIG_ARCH_ARM_V6
+FORCE_INLINE
+#endif
+#endif
 void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 {
     seL4_MessageInfo_t info;
@@ -137,11 +393,13 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
 #ifdef CONFIG_KERNEL_MCS
     if (unlikely(dest->tcbSchedContext != NULL)) {
+        //userError("went into slowpath here 1\n");
         slowpath(SysCall);
     }
 
     reply_t *reply = thread_state_get_replyObject_np(dest->tcbState);
     if (unlikely(reply == NULL)) {
+        //userError("went into slowpath here 1\n");
         slowpath(SysCall);
     }
 #endif
