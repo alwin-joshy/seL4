@@ -255,6 +255,13 @@ config_string(
     UNQUOTE
 )
 
+config_option(
+        KernelExceptionFastpath EXCEPTION_FASTPATH
+        "Enable exception fastpath"
+        DEFAULT OFF
+        #DEPENDS "KernelIsMCS" UNDEF_DISABLED
+)
+
 find_file(
     KernelDomainSchedule default_domain.c
     PATHS src/config
@@ -499,5 +506,7 @@ config_option(
      of __builtin_ctzl and __builtin_ctzll."
     DEFAULT OFF
 )
+
+
 
 add_config_library(kernel "${configure_string}")

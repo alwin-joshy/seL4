@@ -90,7 +90,7 @@ void VISIBLE NORETURN c_handle_data_fault(void)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
-#ifdef CONFIG_FASTPATH
+#ifdef CONFIG_EXCEPTION_FASTPATH
     c_handle_fastpath_vm_fault(seL4_DataFault);
 #else
     vm_fault_slowpath(seL4_DataFault);
@@ -101,7 +101,7 @@ void VISIBLE NORETURN c_handle_instruction_fault(void)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
-#ifdef CONFIG_FASTPATH
+#ifdef CONFIG_EXCEPTION_FASTPATH
     c_handle_fastpath_vm_fault(seL4_InstructionFault);
 #else
     vm_fault_slowpath(seL4_InstructionFault);
