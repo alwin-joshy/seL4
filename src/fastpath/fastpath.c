@@ -39,8 +39,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     handlerCPtr = NODE_STATE(ksCurThread)->tcbFaultHandler;
     handler_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap, handlerCPtr);
 
-    //handler_cap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbFaultHandler)->cap;
-
     if (unlikely(!cap_capType_equals(handler_cap, cap_endpoint_cap) ||
         !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
         vm_fault_slowpath(type);
