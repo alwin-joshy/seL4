@@ -53,15 +53,9 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     * if the endpoint is valid. */
     dest = TCB_PTR(endpoint_ptr_get_epQueue_head(ep_ptr));
 
-    //TODO: Check this is right
-    if (!dest) {
-        vm_fault_slowpath(type);
-    }
-
     /* Check that there's a thread waiting to receive */
     if (unlikely(endpoint_ptr_get_state(ep_ptr) != EPState_Recv)) {
         vm_fault_slowpath(type);
-        userError("here");
     }
 
 /* ensure we are not single stepping the destination in ia32 */
@@ -114,8 +108,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
         vm_fault_slowpath(type);
     }
-
-    userError("here2");
 
     /* Ensure that the endpoint has has grant or grant-reply rights so that we can
     * create the reply cap */
