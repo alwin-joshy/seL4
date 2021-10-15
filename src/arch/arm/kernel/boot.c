@@ -1,5 +1,6 @@
 /*
  * Copyright 2014, General Dynamics C4 Systems
+ * Copyright 2021, HENSOLDT Cyber
  *
  * SPDX-License-Identifier: GPL-2.0-only
  */
@@ -26,11 +27,6 @@
 #ifdef CONFIG_ARM_SMMU
 #include <drivers/smmu/smmuv2.h>
 #endif
-/* pointer to the end of boot code/data in kernel image */
-/* need a fake array to get the pointer from the linker script */
-extern char ki_boot_end[1];
-/* pointer to end of kernel image */
-extern char ki_end[1];
 
 #ifdef ENABLE_SMP_SUPPORT
 /* sync variable to prevent other nodes from booting
@@ -42,8 +38,10 @@ BOOT_BSS static volatile int node_boot_lock;
 #define MAX_RESERVED (ARCH_RESERVED + MODE_RESERVED)
 BOOT_BSS static region_t reserved[MAX_RESERVED];
 
-BOOT_CODE static void arch_init_freemem(p_region_t ui_p_reg, p_region_t dtb_p_reg, v_region_t it_v_reg,
-                                        word_t extra_bi_size_bits)
+BOOT_CODE static bool_t arch_init_freemem(p_region_t ui_p_reg,
+                                          p_region_t dtb_p_reg,
+                                          v_region_t it_v_reg,
+                                          word_t extra_bi_size_bits)
 {
     reserved[0].start = KERNEL_ELF_BASE;
     reserved[0].end = (pptr_t)ki_end;
@@ -57,8 +55,8 @@ BOOT_CODE static void arch_init_freemem(p_region_t ui_p_reg, p_region_t dtb_p_re
     }
 
     if (MODE_RESERVED > 1) {
-        printf("MODE_RESERVED > 1 unsupported!\n");
-        halt();
+        printf("ERROR: MODE_RESERVED > 1 unsupported!\n");
+        return false;
     }
 
     if (ui_p_reg.start < PADDR_TOP) {
@@ -86,7 +84,10 @@ BOOT_CODE static void arch_init_freemem(p_region_t ui_p_reg, p_region_t dtb_p_re
         index++;
     }
 
-    init_freemem(get_num_avail_p_regs(), get_avail_p_regs(), index, reserved, it_v_reg, extra_bi_size_bits);
+    /* avail_p_regs comes from the auto-generated code */
+    return init_freemem(ARRAY_SIZE(avail_p_regs), avail_p_regs,
+                        index, reserved,
+                        it_v_reg, extra_bi_size_bits);
 }
 
 
@@ -138,23 +139,6 @@ BOOT_CODE static void init_smmu(cap_t root_cnode_cap)
 
 #endif
 
-BOOT_CODE static bool_t create_untypeds(cap_t root_cnode_cap, region_t boot_mem_reuse_reg)
-{
-    seL4_SlotPos   slot_pos_before;
-    seL4_SlotPos   slot_pos_after;
-
-    slot_pos_before = ndks_boot.slot_pos_cur;
-    create_device_untypeds(root_cnode_cap, slot_pos_before);
-    create_kernel_untypeds(root_cnode_cap, boot_mem_reuse_reg, slot_pos_before);
-
-    slot_pos_after = ndks_boot.slot_pos_cur;
-    ndks_boot.bi_frame->untyped = (seL4_SlotRegion) {
-        slot_pos_before, slot_pos_after
-    };
-    return true;
-
-}
-
 /** This and only this function initialises the CPU.
  *
  * It does NOT initialise any kernel state.
@@ -189,7 +173,7 @@ BOOT_CODE static bool_t init_cpu(void)
      * On ARM SMP, the array index here is the CPU ID
      */
 #ifndef CONFIG_ARCH_ARM_V6
-    word_t stack_top = ((word_t) kernel_stack_alloc[SMP_TERNARY(getCurrentCPUIndex(), 0)]) + BIT(CONFIG_KERNEL_STACK_BITS);
+    word_t stack_top = ((word_t) kernel_stack_alloc[CURRENT_CPU_INDEX()]) + BIT(CONFIG_KERNEL_STACK_BITS);
 #if defined(ENABLE_SMP_SUPPORT) && defined(CONFIG_ARCH_AARCH64)
     /* the least 12 bits are used to store logical core ID */
     stack_top |= getCurrentCPUIndex();
@@ -361,16 +345,12 @@ static BOOT_CODE bool_t try_init_kernel(
     it_v_reg.start = ui_v_reg.start;
     it_v_reg.end = extra_bi_frame_vptr + BIT(extra_bi_size_bits);
 
-    if (it_v_reg.end >= USER_TOP) {
-        printf("Userland image virtual end address too high\n");
-        return false;
-    }
-
     /* setup virtual memory for the kernel */
     map_kernel_window();
 
     /* initialise the CPU */
     if (!init_cpu()) {
+        printf("ERROR: CPU init failed\n");
         return false;
     }
 
@@ -380,11 +360,26 @@ static BOOT_CODE bool_t try_init_kernel(
     /* initialise the platform */
     init_plat();
 
-    arch_init_freemem(ui_p_reg, dtb_p_reg, it_v_reg, extra_bi_size_bits);
+    if (it_v_reg.end >= USER_TOP) {
+        /* Variable arguments for printf() require well defined integer types to
+         * work properly. Unfortunately, the definition of USER_TOP differs
+         * between platforms (int, long), so we have to cast here to play safe.
+         */
+        printf("ERROR: userland image virt [%"SEL4_PRIx_word"..%"SEL4_PRIx_word"]"
+               "exceeds USER_TOP (%"SEL4_PRIx_word")\n",
+               it_v_reg.start, it_v_reg.end, (word_t)USER_TOP);
+        return false;
+    }
+
+    if (!arch_init_freemem(ui_p_reg, dtb_p_reg, it_v_reg, extra_bi_size_bits)) {
+        printf("ERROR: free memory management initialization failed\n");
+        return false;
+    }
 
     /* create the root cnode */
     root_cnode_cap = create_root_cnode();
     if (cap_get_capType(root_cnode_cap) == cap_null_cap) {
+        printf("ERROR: root c-node creation failed\n");
         return false;
     }
 
@@ -423,6 +418,7 @@ static BOOT_CODE bool_t try_init_kernel(
         ndks_boot.bi_frame->ioSpaceCaps = create_iospace_caps(root_cnode_cap);
         if (ndks_boot.bi_frame->ioSpaceCaps.start == 0 &&
             ndks_boot.bi_frame->ioSpaceCaps.end == 0) {
+            printf("ERROR: SMMU I/O space creation failed\n");
             return false;
         }
     } else {
@@ -433,6 +429,7 @@ static BOOT_CODE bool_t try_init_kernel(
      * to cover the user image + ipc buffer and bootinfo frames */
     it_pd_cap = create_it_address_space(root_cnode_cap, it_v_reg);
     if (cap_get_capType(it_pd_cap) == cap_null_cap) {
+        printf("ERROR: address space creation for initial thread failed\n");
         return false;
     }
 
@@ -458,6 +455,7 @@ static BOOT_CODE bool_t try_init_kernel(
                 pptr_to_paddr((void *)extra_bi_region.start) - extra_bi_frame_vptr
             );
         if (!extra_bi_ret.success) {
+            printf("ERROR: mapping extra boot info to initial thread failed\n");
             return false;
         }
         ndks_boot.bi_frame->extraBIPages = extra_bi_ret.region;
@@ -470,6 +468,7 @@ static BOOT_CODE bool_t try_init_kernel(
     /* create the initial thread's IPC buffer */
     ipcbuf_cap = create_ipcbuf_frame_cap(root_cnode_cap, it_pd_cap, ipcbuf_vptr);
     if (cap_get_capType(ipcbuf_cap) == cap_null_cap) {
+        printf("ERROR: could not create IPC buffer for initial thread\n");
         return false;
     }
 
@@ -483,6 +482,7 @@ static BOOT_CODE bool_t try_init_kernel(
             pv_offset
         );
     if (!create_frames_ret.success) {
+        printf("ERROR: could not create all userland image frames\n");
         return false;
     }
     ndks_boot.bi_frame->userImageFrames = create_frames_ret.region;
@@ -490,6 +490,7 @@ static BOOT_CODE bool_t try_init_kernel(
     /* create/initialise the initial thread's ASID pool */
     it_ap_cap = create_it_asid_pool(root_cnode_cap);
     if (cap_get_capType(it_ap_cap) == cap_null_cap) {
+        printf("ERROR: could not create ASID pool for initial thread\n");
         return false;
     }
     write_it_asid_pool(it_ap_cap, it_pd_cap);
@@ -500,6 +501,7 @@ static BOOT_CODE bool_t try_init_kernel(
 
     /* create the idle thread */
     if (!create_idle_thread()) {
+        printf("ERROR: could not create idle thread\n");
         return false;
     }
 
@@ -520,6 +522,7 @@ static BOOT_CODE bool_t try_init_kernel(
                      );
 
     if (initial == NULL) {
+        printf("ERROR: could not create initial thread\n");
         return false;
     }
 
@@ -532,6 +535,7 @@ static BOOT_CODE bool_t try_init_kernel(
     KERNEL_ELF_BASE, (pptr_t)ki_boot_end
     } /* reusable boot code/data */
         )) {
+        printf("ERROR: could not create untypteds for kernel image boot memory\n");
         return false;
     }
 
@@ -541,15 +545,17 @@ static BOOT_CODE bool_t try_init_kernel(
     /* finalise the bootinfo frame */
     bi_finalise();
 
-    /* make everything written by the kernel visible to userland. Cleaning to PoC is not
-     * strictly neccessary, but performance is not critical here so clean and invalidate
-     * everything to PoC */
+    /* Flushing the L1 cache and invalidating the TLB is good enough here to
+     * make sure everything written by the kernel is visible to userland. There
+     * are no uncached userland frames at this stage that require enforcing
+     * flushing to RAM. Any retyping operation will clean the memory down to RAM
+     * anyway.
+     */
     cleanInvalidateL1Caches();
     invalidateLocalTLB();
     if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
         invalidateHypTLB();
     }
-
 
     ksNumCPUs = 1;
 
@@ -604,7 +610,8 @@ BOOT_CODE VISIBLE void init_kernel(
 #endif /* ENABLE_SMP_SUPPORT */
 
     if (!result) {
-        fail("Kernel init failed for some reason :(");
+        fail("ERROR: kernel init failed");
+        UNREACHABLE();
     }
 
 #ifdef CONFIG_KERNEL_MCS
@@ -614,4 +621,3 @@ BOOT_CODE VISIBLE void init_kernel(
     schedule();
     activateThread();
 }
-

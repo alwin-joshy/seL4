@@ -20,6 +20,10 @@ elseif(KernelArmCortexA53)
     set(KernelArmICacheVIPT ON)
     set(KernelArmPASizeBits40 ON)
     math(EXPR KernelPaddrUserTop "(1 << 40)")
+elseif(KernelArmCortexA55)
+    set(KernelArmICacheVIPT ON)
+    set(KernelArmPASizeBits40 ON)
+    math(EXPR KernelPaddrUserTop "(1 << 40)")
 elseif(KernelArmCortexA57)
     set(KernelArmPASizeBits44 ON)
     math(EXPR KernelPaddrUserTop "(1 << 44)")
@@ -93,8 +97,16 @@ config_option(
     "Build as Hypervisor. Utilise ARM virtualisation extensions to build the kernel as a hypervisor"
     DEFAULT ${KernelSel4ArchArmHyp}
     DEPENDS
-        "KernelArmCortexA15 OR KernelArmCortexA35 OR KernelArmCortexA57 OR KernelArmCortexA53 OR KernelArmCortexA72"
+        "KernelArmCortexA15 OR KernelArmCortexA35 OR KernelArmCortexA57 OR KernelArmCortexA53 OR KernelArmCortexA55 OR KernelArmCortexA72"
 )
+
+config_option(KernelArmGicV3 ARM_GIC_V3_SUPPORT "Build support for GICv3" DEFAULT OFF)
+
+if(KernelArmPASizeBits40 AND ARM_HYPERVISOR_SUPPORT)
+    config_set(KernelAarch64VspaceS2StartL1 AARCH64_VSPACE_S2_START_L1 "ON")
+else()
+    config_set(KernelAarch64VspaceS2StartL1 AARCH64_VSPACE_S2_START_L1 "OFF")
+endif()
 
 config_option(
     KernelArmHypEnableVCPUCP14SaveAndRestore ARM_HYP_ENABLE_VCPU_CP14_SAVE_AND_RESTORE
@@ -207,6 +219,7 @@ if(
     OR KernelArmCortexA15
     OR KernelArmCortexA35
     OR KernelArmCortexA53
+    OR KernelArmCortexA55
     OR KernelArmCortexA57
     OR KernelArmCortexA72
 )

@@ -249,12 +249,12 @@ BOOT_CODE void map_kernel_window(void)
 
     /* place the PUD into the PGD */
     armKSGlobalKernelPGD[GET_PGD_INDEX(PPTR_BASE)] = pgde_pgde_pud_new(
-                                                         pptr_to_paddr(armKSGlobalKernelPUD));
+                                                         addrFromKPPtr(armKSGlobalKernelPUD));
 
     /* place all PDs except the last one in PUD */
     for (idx = GET_PUD_INDEX(PPTR_BASE); idx < GET_PUD_INDEX(PPTR_TOP); idx++) {
         armKSGlobalKernelPUD[idx] = pude_pude_pd_new(
-                                        pptr_to_paddr(&armKSGlobalKernelPDs[idx][0])
+                                        addrFromKPPtr(&armKSGlobalKernelPDs[idx][0])
                                     );
     }
 
@@ -279,12 +279,12 @@ BOOT_CODE void map_kernel_window(void)
 
     /* put the PD into the PUD for device window */
     armKSGlobalKernelPUD[GET_PUD_INDEX(PPTR_TOP)] = pude_pude_pd_new(
-                                                        pptr_to_paddr(&armKSGlobalKernelPDs[BIT(PUD_INDEX_BITS) - 1][0])
+                                                        addrFromKPPtr(&armKSGlobalKernelPDs[BIT(PUD_INDEX_BITS) - 1][0])
                                                     );
 
     /* put the PT into the PD for device window */
     armKSGlobalKernelPDs[BIT(PUD_INDEX_BITS) - 1][BIT(PD_INDEX_BITS) - 1] = pde_pde_small_new(
-                                                                                pptr_to_paddr(armKSGlobalKernelPT)
+                                                                                addrFromKPPtr(armKSGlobalKernelPT)
                                                                             );
 
     map_kernel_devices();
@@ -534,10 +534,10 @@ BOOT_CODE cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vpt
 BOOT_CODE void activate_kernel_vspace(void)
 {
     cleanInvalidateL1Caches();
-    setCurrentKernelVSpaceRoot(ttbr_new(0, pptr_to_paddr(armKSGlobalKernelPGD)));
+    setCurrentKernelVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalKernelPGD)));
 
     /* Prevent elf-loader address translation to fill up TLB */
-    setCurrentUserVSpaceRoot(ttbr_new(0, pptr_to_paddr(armKSGlobalUserVSpace)));
+    setCurrentUserVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalUserVSpace)));
 
     invalidateLocalTLB();
     lockTLBEntry(KERNEL_ELF_BASE);
@@ -991,7 +991,7 @@ void setVMRoot(tcb_t *tcb)
     threadRoot = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
 
     if (!isValidNativeRoot(threadRoot)) {
-        setCurrentUserVSpaceRoot(ttbr_new(0, pptr_to_paddr(armKSGlobalUserVSpace)));
+        setCurrentUserVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalUserVSpace)));
         return;
     }
 
@@ -999,7 +999,7 @@ void setVMRoot(tcb_t *tcb)
     asid = cap_vtable_root_get_mappedASID(threadRoot);
     find_ret = findVSpaceForASID(asid);
     if (unlikely(find_ret.status != EXCEPTION_NONE || find_ret.vspace_root != vspaceRoot)) {
-        setCurrentUserVSpaceRoot(ttbr_new(0, pptr_to_paddr(armKSGlobalUserVSpace)));
+        setCurrentUserVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalUserVSpace)));
         return;
     }
 
@@ -1508,7 +1508,7 @@ static exception_t performUpperPageDirectoryInvocationUnmap(cap_t cap, cte_t *ct
         pude_t *pud = PUD_PTR(cap_page_upper_directory_cap_get_capPUDBasePtr(cap));
         unmapPageUpperDirectory(cap_page_upper_directory_cap_get_capPUDMappedASID(cap),
                                 cap_page_upper_directory_cap_get_capPUDMappedAddress(cap), pud);
-        clearMemory((void *)pud, cap_get_capSizeBits(cap));
+        clearMemory_PT((void *)pud, cap_get_capSizeBits(cap));
     }
 
     cap_page_upper_directory_cap_ptr_set_capPUDIsMapped(&(ctSlot->cap), 0);
@@ -1531,7 +1531,7 @@ static exception_t performPageDirectoryInvocationUnmap(cap_t cap, cte_t *ctSlot)
         pde_t *pd = PD_PTR(cap_page_directory_cap_get_capPDBasePtr(cap));
         unmapPageDirectory(cap_page_directory_cap_get_capPDMappedASID(cap),
                            cap_page_directory_cap_get_capPDMappedAddress(cap), pd);
-        clearMemory((void *)pd, cap_get_capSizeBits(cap));
+        clearMemory_PT((void *)pd, cap_get_capSizeBits(cap));
     }
 
     cap_page_directory_cap_ptr_set_capPDIsMapped(&(ctSlot->cap), 0);
@@ -1553,7 +1553,7 @@ static exception_t performPageTableInvocationUnmap(cap_t cap, cte_t *ctSlot)
         pte_t *pt = PT_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
         unmapPageTable(cap_page_table_cap_get_capPTMappedASID(cap),
                        cap_page_table_cap_get_capPTMappedAddress(cap), pt);
-        clearMemory((void *)pt, cap_get_capSizeBits(cap));
+        clearMemory_PT((void *)pt, cap_get_capSizeBits(cap));
     }
 
     cap_page_table_cap_ptr_set_capPTIsMapped(&(ctSlot->cap), 0);
@@ -2560,7 +2560,7 @@ exception_t benchmark_arch_map_logBuffer(word_t frame_cptr)
                              0,                         /* VMKernelOnly */
                              NORMAL);
 
-    cleanByVA_PoU((vptr_t)armKSGlobalLogPDE, pptr_to_paddr(armKSGlobalLogPDE));
+    cleanByVA_PoU((vptr_t)armKSGlobalLogPDE, addrFromKPPtr(armKSGlobalLogPDE));
     invalidateTranslationSingle(KS_LOG_PPTR);
     return EXCEPTION_NONE;
 }
