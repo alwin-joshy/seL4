@@ -34,11 +34,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     pde_t stored_hw_asid;
     dom_t dom;
 
-
-<<<<<<< HEAD
-
-=======
->>>>>>> 8d2449ce8ad91556fc84cf59167b0d8b9ee327e8
     handlerCPtr = NODE_STATE(ksCurThread)->tcbFaultHandler;
     handler_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap, handlerCPtr);
 
@@ -240,10 +235,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 #endif
 
 #ifdef CONFIG_ARCH_ARM
-<<<<<<< HEAD
-
-=======
->>>>>>> 8d2449ce8ad91556fc84cf59167b0d8b9ee327e8
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     word_t ipa, va;
     va = getRestartPC(NODE_STATE(ksCurThread));
@@ -581,10 +572,22 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     /* Check that the caller has not faulted, in which case a fault
     reply is generated instead. */
+
+
+//    if (unlikely(fault_type != seL4_Fault_NullFault && fault_type != seL4_Fault_VMFault)) {
+//        slowpath(SysReplyRecv);
+//    }
+
     fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
+#ifndef CONFIG_EXCEPTION_FASTPATH
+    if (unlikely(fault_type != seL4_Fault_NullFault)) {
+        slowpath(SysReplyRecv);
+    }
+#else // TODO: Will be able to get rid of this once all exceptions are accoutned for
     if (unlikely(fault_type != seL4_Fault_NullFault && fault_type != seL4_Fault_VMFault)) {
         slowpath(SysReplyRecv);
     }
+#endif
 
     /* Get destination thread.*/
     newVTable = TCB_PTR_CTE_PTR(caller, tcbVTable)->cap;
@@ -732,6 +735,8 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     /* Check that the caller has not faulted, in which case a fault
     reply is generated instead. */
+
+#ifdef CONFIG_EXCEPTION_FASTPATH
     fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         bool_t restart;
@@ -754,14 +759,19 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
                 restart = 1;
                 break;
         }
+
         if (restart) {
-            word_t pc = getRestartPC(NODE_STATE(ksCurThread));
-            setNextPC(NODE_STATE(ksCurThread), pc);
+            //word_t pc = getRestartPC(caller);
+            //setNextPC(caller, pc);
         }
+    caller->tcbFault = seL4_Fault_NullFault_new();
     } else {
         /* I know there's no fault, so straight to the transfer. */
         fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
     }
+#else
+    fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
+#endif
 
     /* Replies don't have a badge. */
     badge = 0;
