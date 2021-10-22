@@ -566,9 +566,9 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     /* Check that the caller has not faulted, in which case a fault
     reply is generated instead. */
+    fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
 
-
-//    if (unlikely(fault_type != seL4_Fault_NullFault && fault_type != seL4_Fault_VMFault)) {
+//    if (unlikely(fault_type != seL4_Fault_NullFault)) {
 //        slowpath(SysReplyRecv);
 //    }
 
@@ -755,26 +755,39 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         }
 
         if (restart) {
-            //word_t pc = getRestartPC(caller);
-            //setNextPC(caller, pc);
+            word_t pc = getRestartPC(caller);
+            setNextPC(caller, pc);
         }
-    caller->tcbFault = seL4_Fault_NullFault_new();
+        caller->tcbFault = seL4_Fault_NullFault_new();
+        /* Replies don't have a badge. */
+        badge = 0;
+        /* Dest thread is set Running, but not queued. */
+        thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
+        switchToThread_fp(caller, cap_pd, stored_hw_asid);
+        //activateThread();
+
+        msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
+        restore_user_context();
+        //fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
     } else {
         /* I know there's no fault, so straight to the transfer. */
         fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
+        /* Replies don't have a badge. */
+        badge = 0;
+        /* Dest thread is set Running, but not queued. */
+        thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
+        switchToThread_fp(caller, cap_pd, stored_hw_asid);
+
+        msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
+        fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
     }
 #else
     fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
-#endif
-
     /* Replies don't have a badge. */
     badge = 0;
     /* Dest thread is set Running, but not queued. */
-    thread_state_ptr_set_tsType_np(&caller->tcbState,
-                                   ThreadState_Running);
+    thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
     switchToThread_fp(caller, cap_pd, stored_hw_asid);
+#endif
 
-    msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
-
-    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
