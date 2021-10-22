@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        march: [armv6a, armv7a, armv8a, nehalem, rv32imac, rv64imac]
+        march: [armv7a, armv8a, nehalem, rv32imac, rv64imac]
         compiler: [gcc, clang]
         exclude:
           - march: rv32imac
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        march: [armv6a, armv7a, armv8a, nehalem]
+        march: [armv7a, armv8a, nehalem]
         compiler: [gcc, clang]
         include:
           - march: rv64imac
@@ -78,6 +78,7 @@ jobs:
 
   hw-run:
     name: HW Run
+    if: ${{ github.repository_owner == 'seL4' }}
     runs-on: ubuntu-latest
     needs: [sim, hw-build]
     strategy:
@@ -140,6 +141,7 @@ jobs:
 
   deploy:
     name: Deploy manifest
+    if: ${{ github.repository_owner == 'seL4' }}
     runs-on: ubuntu-latest
     needs: [code, hw-run]
     steps:
