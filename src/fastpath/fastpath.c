@@ -19,7 +19,6 @@
 static inline
 FORCE_INLINE
 #endif
-#endif
 void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     cptr_t handlerCPtr;
     cap_t handler_cap;
@@ -259,9 +258,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
 #ifdef CONFIG_ARCH_ARM
 static inline
-#ifndef CONFIG_ARCH_ARM_V6
 FORCE_INLINE
-#endif
 #endif
 void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 {
