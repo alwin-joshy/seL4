@@ -16,6 +16,7 @@
 #include <benchmark/benchmark_utilisation.h>
 
 #ifdef CONFIG_ARCH_ARM
+#ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
 #endif
@@ -254,6 +255,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
+#endif
 
 
 #ifdef CONFIG_ARCH_ARM
@@ -788,6 +790,8 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Dest thread is set Running, but not queued. */
     thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
     switchToThread_fp(caller, cap_pd, stored_hw_asid);
-#endif
 
+    msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
+    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+#endif
 }
