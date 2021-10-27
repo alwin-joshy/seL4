@@ -40,5 +40,8 @@ VISIBLE;
 void c_handle_interrupt(int irq, int syscall)
 VISIBLE NORETURN;
 
+void vm_fault_slowpath(vm_fault_type_t type)
+VISIBLE NORETURN;
+
 void c_handle_vmexit(void)
 VISIBLE NORETURN;
