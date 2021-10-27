@@ -15,7 +15,7 @@
 #endif
 #include <benchmark/benchmark_utilisation.h>
 
-#ifdef CONFIG_ARCH_ARM
+
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
@@ -236,7 +236,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     uint32_t fault;
 
     addr = getFaultAddr();
-    fault = getRegister(thread, Error);
+    fault = getRegister(NODE_STATE(ksCurThread), Error);
 
     switch (type) {
         case X86DataFault: {
@@ -277,7 +277,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
-#endif
 
 
 #ifdef CONFIG_ARCH_ARM
@@ -596,7 +595,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 //        slowpath(SysReplyRecv);
 //    }
 
-    fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
+//    fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
 #ifndef CONFIG_EXCEPTION_FASTPATH
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         slowpath(SysReplyRecv);

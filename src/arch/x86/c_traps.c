@@ -66,7 +66,7 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
 #endif
 
 #ifdef CONFIG_EXCEPTION_FASTPATH
-        c_handle_fastpath_vm_fault(type);
+        fastpath_vm_fault(type);
 #else
         vm_fault_slowpath(type);
 #endif
