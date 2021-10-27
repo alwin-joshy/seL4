@@ -26,6 +26,15 @@ void VISIBLE c_nested_interrupt(int irq)
     ARCH_NODE_STATE(x86KSPendingInterrupt) = irq;
 }
 
+void VISIBLE NORETURN vm_fault_slowpath(vm_fault_type_t type) {
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.is_fastpath = 0;
+#endif
+    handleVMFaultEvent(type);
+    restore_user_context();
+    UNREACHABLE();
+}
+
 void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
 {
     /* need to run this first as the NODE_LOCK code might end up as a function call
@@ -55,7 +64,13 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
         ksKernelEntry.path = Entry_VMFault;
         ksKernelEntry.word = type;
 #endif
-        handleVMFaultEvent(type);
+
+#ifdef CONFIG_EXCEPTION_FASTPATH
+        c_handle_fastpath_vm_fault(type);
+#else
+        vm_fault_slowpath(type);
+#endif
+
 #ifdef CONFIG_HARDWARE_DEBUG_API
     } else if (irq == int_debug || irq == int_software_break_request) {
         /* Debug exception */

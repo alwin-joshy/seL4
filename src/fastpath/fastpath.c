@@ -231,6 +231,23 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
             break;
         }
     }
+#elsif CONFIG_ARCH_X86_64
+    word_t addr;
+    uint32_t fault;
+
+    addr = getFaultAddr();
+    fault = getRegister(thread, Error);
+
+    switch (type) {
+        case X86DataFault: {
+            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+            break;
+        }
+        case X86InstructionFault: {
+            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
+            break;
+        }
+    }
 #endif
 
 #ifdef CONFIG_ARCH_ARM
@@ -242,6 +259,11 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 #else
     setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread)));
 #endif
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
+#elsif CONFIG_ARCH_X86_64
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));

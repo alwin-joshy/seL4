@@ -62,36 +62,36 @@ void VISIBLE NORETURN c_handle_enfp(void)
 }
 #endif /* CONFIG_HAVE_FPU */
 
-static inline void NORETURN vm_fault_slowpath(vm_fault_type_t type)
+void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 {
 #ifdef TRACK_KERNEL_ENTRIES
-    ksKernelEntry.path = Entry_VMFault;
-    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+    ksKernelEntry.is_fastpath = 0;
 #endif
-
     handleVMFaultEvent(type);
 
     restore_user_context();
     UNREACHABLE();
 }
 
-void NORETURN c_handle_fastpath_vm_fault(vm_fault_type_t type) {
-#ifdef TRACK_KERNEL_ENTRIES
-    ksKernelEntry.path = Entry_VMFault;
-    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
-    ksKernelEntry.is_fastpath = 1;
-#endif
-
-    fastpath_vm_fault(type);
-    UNREACHABLE();
-}
+//void NORETURN c_handle_fastpath_vm_fault(vm_fault_type_t type) {
+//    fastpath_vm_fault(type);
+//    UNREACHABLE();
+//}
 
 void VISIBLE NORETURN c_handle_data_fault(void)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
+
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.path = Entry_VMFault;
+    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+#endif
+
 #ifdef CONFIG_EXCEPTION_FASTPATH
-    c_handle_fastpath_vm_fault(seL4_DataFault);
+    fastpath_vm_fault(seL4_DataFault);
+    UNREACHABLE();
+    //c_handle_fastpath_vm_fault(seL4_DataFault);
 #else
     vm_fault_slowpath(seL4_DataFault);
 #endif
@@ -101,8 +101,16 @@ void VISIBLE NORETURN c_handle_instruction_fault(void)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
+
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.path = Entry_VMFault;
+    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+#endif
+
 #ifdef CONFIG_EXCEPTION_FASTPATH
-    c_handle_fastpath_vm_fault(seL4_InstructionFault);
+    fastpath_vm_fault(seL4_InstructionFault);
+    UNREACHABLE();
+    //c_handle_fastpath_vm_fault(seL4_InstructionFault);
 #else
     vm_fault_slowpath(seL4_InstructionFault);
 #endif
@@ -168,6 +176,7 @@ void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, SysCall);
+    // TODO: This is also done in the fastpath, where I think it makes more sense.
     ksKernelEntry.is_fastpath = 1;
 #endif /* DEBUG */
 
@@ -187,6 +196,7 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, SysReplyRecv);
+    // TODO: This is also done in the fastpath, where I think it makes more sense.
     ksKernelEntry.is_fastpath = 1;
 #endif /* DEBUG */
 
