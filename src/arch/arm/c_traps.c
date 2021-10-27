@@ -73,11 +73,6 @@ void NORETURN vm_fault_slowpath(vm_fault_type_t type)
     UNREACHABLE();
 }
 
-//void NORETURN c_handle_fastpath_vm_fault(vm_fault_type_t type) {
-//    fastpath_vm_fault(type);
-//    UNREACHABLE();
-//}
-
 void VISIBLE NORETURN c_handle_data_fault(void)
 {
     NODE_LOCK_SYS;
