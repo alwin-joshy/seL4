@@ -206,6 +206,31 @@
                 </description>
             </error>
         </method>
+        <method id="ARMVspaceRange_Unmap" name = "Range_Unmap"
+            manual_name="Vspace Range Unmap" manual_label="vspace_range_unmap">
+            <brief>
+                Unmap a range of pages in this vspace
+            </brief>
+            <description>
+                Unmap a range of pages in this vspace
+            </description>
+            <param dir="in" name="base_page" type="seL4_CPtr"
+                   description="The first page which should be unmapped"/>
+            <param dir="in" name="npages" type="seL4_Word"
+                   description="The number of pages to unmap"/>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                    Or, <texttt text="base_page"/> is a CPtr to a capability of the wrong type.
+                    Or, one of the the pages in the provided range is not already mapped.
+                </description>
+            </error>
+        </method>
     </interface>
     <interface name="seL4_ARM_PageUpperDirectory" manual_name="Page Upper Directory"
         cap_description="Capability to the upper page directory being operated on.">
