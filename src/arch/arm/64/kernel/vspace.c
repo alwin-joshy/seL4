@@ -1712,6 +1712,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             return EXCEPTION_SYSCALL_ERROR;
         }
 
+
         /* Don't need to do any validity checks on this one because we already know that it is valid from the
          * checks prior to it being passed in */
         base = current_extra_caps.excaprefs[0]->cap;
@@ -1751,7 +1752,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         start_vaddr = cap_frame_cap_get_capFMappedAddress(base);
-        frameSize = cap_frame_cap_get_capFSize(cap);
+        frameSize = cap_frame_cap_get_capFSize(base);
 
         if (frameSize == ARMSmallPage) {
             pte_t *pages[3000];
