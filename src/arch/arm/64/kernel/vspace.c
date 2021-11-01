@@ -1603,7 +1603,6 @@ static exception_t performSmallPageInvocationMap(asid_t asid, cap_t cap, cte_t *
                                                  pte_t pte, pte_t *ptSlot)
 {
     bool_t tlbflush_required = pte_ptr_get_present(ptSlot);
-
     ctSlot->cap = cap;
     *ptSlot = pte;
 
@@ -1716,7 +1715,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         /* Don't need to do any validity checks on this one because we already know that it is valid from the
          * checks prior to it being passed in */
         base = current_extra_caps.excaprefs[0]->cap;
-        n_pages = getSyscallArg(1, buffer);
+        n_pages = getSyscallArg(0, buffer);
 
         if (unlikely(!isValidNativeRoot(cap))) {
             current_syscall_error.type = seL4_InvalidCapability;
