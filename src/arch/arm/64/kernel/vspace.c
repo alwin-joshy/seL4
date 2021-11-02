@@ -1697,13 +1697,13 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
     switch (invLabel) {
     case ARMVspaceRange_Unmap: {
-        cap_t base;
+        cap_t base_cap;
         seL4_Word n_pages;
         asid_t asid;
         vspace_root_t *vspaceRoot;
         vm_page_size_t frameSize;
-        vptr_t start_vaddr;
         findVSpaceForASID_ret_t find_ret;
+        seL4_CPtr base_cptr;
 
         if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
             userError("VspaceRoot Unmap: Truncated message.");
@@ -1714,7 +1714,8 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         /* Don't need to do any validity checks on this one because we already know that it is valid from the
          * checks prior to it being passed in */
-        base = current_extra_caps.excaprefs[0]->cap;
+        base_cptr = getExtraCPtr(buffer, 0);
+        base_cap = current_extra_caps.excaprefs[0]->cap;
         n_pages = getSyscallArg(0, buffer);
 
         if (unlikely(!isValidNativeRoot(cap))) {
@@ -1724,6 +1725,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         /* Make sure that the supplied pgd is ok */
+
         vspaceRoot = cap_vtable_root_get_basePtr(cap);
         asid = cap_vtable_root_get_mappedASID(cap);
 
@@ -1742,22 +1744,40 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        /* Make sure that the supplied base cap refers to a frame*/
-        if (unlikely(cap_get_capType(base)) != cap_frame_cap) {
+//        /* Make sure that the supplied base cap refers to a frame*/
+        if (unlikely(cap_get_capType(base_cap)) != cap_frame_cap) {
             userError("VSpaceRoot Unmap: Base cap does not refer to a valid frame");
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 1;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        start_vaddr = cap_frame_cap_get_capFMappedAddress(base);
-        frameSize = cap_frame_cap_get_capFSize(base);
+        frameSize = cap_frame_cap_get_capFSize(base_cap);
 
         if (frameSize == ARMSmallPage) {
+            vptr_t vaddr[3000];
             pte_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPTSlot_ret_t lu_ret = lookupPTSlot(vspaceRoot, start_vaddr + (i * (1 << seL4_PageBits)));
+                lookupSlot_raw_ret_t lu_ret_cap = lookupSlot(NODE_STATE(ksCurThread), base_cptr + i);
+
+                if (lu_ret_cap.status != EXCEPTION_NONE) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                cap_t frame_cap = lu_ret_cap.slot->cap;
+
+                if (cap_get_capType(frame_cap) != cap_frame_cap) {
+                    userError("VSpaceRoot Unmap: Cap in range does not refer to a frame");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.invalidCapNumber = i;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                vaddr[i] =  cap_frame_cap_get_capFMappedAddress(frame_cap);
+                lookupPTSlot_ret_t lu_ret = lookupPTSlot(vspaceRoot, vaddr[i]);
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1771,14 +1791,33 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pte_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
+                invalidateTLBByASIDVA(asid, vaddr[i]);
             }
 
         } else if (frameSize == ARMLargePage) {
+            vptr_t vaddr[3000];
             pde_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPDSlot_ret_t lu_ret = lookupPDSlot(vspaceRoot, start_vaddr + i * (1 << seL4_PageBits));
+                lookupSlot_raw_ret_t lu_ret_cap = lookupSlot(NODE_STATE(ksCurThread), base_cptr + i);
+
+                if (lu_ret_cap.status != EXCEPTION_NONE) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                cap_t frame_cap = lu_ret_cap.slot->cap;
+
+                if (cap_get_capType(frame_cap) != cap_frame_cap) {
+                    userError("VSpaceRoot Unmap: Cap in range does not refer to a frame");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.invalidCapNumber = i;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                vaddr[i] =  cap_frame_cap_get_capFMappedAddress(frame_cap);
+                lookupPDSlot_ret_t lu_ret = lookupPDSlot(vspaceRoot, vaddr[i]);
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1792,14 +1831,34 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pde_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
+                invalidateTLBByASIDVA(asid, vaddr[i]);
             }
 
         } else {
+            vptr_t vaddr[3000];
             pude_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPUDSlot_ret_t lu_ret = lookupPUDSlot(vspaceRoot, start_vaddr + i * (1 << seL4_PageBits));
+
+                lookupSlot_raw_ret_t lu_ret_cap = lookupSlot(NODE_STATE(ksCurThread), base_cptr + i);
+
+                if (lu_ret_cap.status != EXCEPTION_NONE) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                cap_t frame_cap = lu_ret_cap.slot->cap;
+
+                if (cap_get_capType(frame_cap) != cap_frame_cap) {
+                    userError("VSpaceRoot Unmap: Cap in range does not refer to a frame");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.invalidCapNumber = i;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                vaddr[i] =  cap_frame_cap_get_capFMappedAddress(frame_cap);
+                lookupPUDSlot_ret_t lu_ret = lookupPUDSlot(vspaceRoot, vaddr[i]);
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1813,7 +1872,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pude_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
+                invalidateTLBByASIDVA(asid, vaddr[i]);
             }
         }
 
