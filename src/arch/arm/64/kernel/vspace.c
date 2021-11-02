@@ -1725,7 +1725,6 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         /* Make sure that the supplied pgd is ok */
-
         vspaceRoot = cap_vtable_root_get_basePtr(cap);
         asid = cap_vtable_root_get_mappedASID(cap);
 
