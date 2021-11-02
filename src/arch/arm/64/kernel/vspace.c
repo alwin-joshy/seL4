@@ -1757,7 +1757,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             pte_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPTSlot_ret_t lu_ret = lookupPTSlot(vspaceRoot, start_vaddr + i * (1 << frameSize));
+                lookupPTSlot_ret_t lu_ret = lookupPTSlot(vspaceRoot, start_vaddr + (i * (1 << seL4_PageBits)));
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1771,14 +1771,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pte_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << frameSize));
+                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
             }
 
         } else if (frameSize == ARMLargePage) {
             pde_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPDSlot_ret_t lu_ret = lookupPDSlot(vspaceRoot, start_vaddr + i * (1 << frameSize));
+                lookupPDSlot_ret_t lu_ret = lookupPDSlot(vspaceRoot, start_vaddr + i * (1 << seL4_PageBits));
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1792,14 +1792,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pde_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << frameSize));
+                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
             }
 
         } else {
             pude_t *pages[3000];
 
             for (int i = 0; i < n_pages; i++) {
-                lookupPUDSlot_ret_t lu_ret = lookupPUDSlot(vspaceRoot, start_vaddr + i * (1 << frameSize));
+                lookupPUDSlot_ret_t lu_ret = lookupPUDSlot(vspaceRoot, start_vaddr + i * (1 << seL4_PageBits));
 
                 if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                     current_syscall_error.type = seL4_FailedLookup;
@@ -1813,7 +1813,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             for (int i = 0; i < n_pages; i++) {
                 *(pages[i]) = pude_invalid_new();
                 cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << frameSize));
+                invalidateTLBByASIDVA(asid, start_vaddr + i * (1 << seL4_PageBits));
             }
         }
 
