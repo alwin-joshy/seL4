@@ -1766,7 +1766,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             if (cap_get_capType(frame_cap) != cap_frame_cap) {
                 userError("VSpaceRoot Unmap: Cap in range does not refer to a frame");
                 current_syscall_error.type = seL4_InvalidCapability;
-                current_syscall_error.invalidCapNumber = i;
+                current_syscall_error.invalidCapNumber = base_cptr + i;
                 return EXCEPTION_SYSCALL_ERROR;
             }
 
