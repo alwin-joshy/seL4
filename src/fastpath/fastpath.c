@@ -782,12 +782,9 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
             setNextPC(caller, pc);
         }
         caller->tcbFault = seL4_Fault_NullFault_new();
-        /* Replies don't have a badge. */
-        badge = 0;
         /* Dest thread is set Running, but not queued. */
         thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
         switchToThread_fp(caller, cap_pd, stored_hw_asid);
-        //activateThread();
 
         msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
         restore_user_context();

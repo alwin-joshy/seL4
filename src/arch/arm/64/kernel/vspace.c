@@ -1697,23 +1697,22 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
     switch (invLabel) {
     case ARMVspaceRange_Unmap: {
-        cap_t base_cap;
-        seL4_Word n_pages;
         asid_t asid;
         vspace_root_t *vspaceRoot;
-        vm_page_size_t frameSize;
+        vptr_t base_vaddr, end_vaddr, curr_vaddr;
         findVSpaceForASID_ret_t find_ret;
-        seL4_CPtr base_cptr;
 
-        if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
+        if (length < 2) {
             userError("VspaceRoot Unmap: Truncated message.");
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        base_cptr = getExtraCPtr(buffer, 0);
-        base_cap = current_extra_caps.excaprefs[0]->cap;
-        n_pages = getSyscallArg(0, buffer);
+
+        /* Don't need to do any validity checks on this one because we already know that it is valid from the
+         * checks prior to it being passed in */
+        base_vaddr = getSyscallArg(0, buffer);
+        end_vaddr = getSyscallArg(1, buffer);
 
         if (unlikely(!isValidNativeRoot(cap))) {
             current_syscall_error.type = seL4_InvalidCapability;
@@ -1740,102 +1739,60 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        /* Make sure that the supplied base cap refers to a frame*/
-        if (unlikely(cap_get_capType(base_cap)) != cap_frame_cap) {
-            userError("VSpaceRoot Unmap: Base cap does not refer to a valid frame");
-            current_syscall_error.type = seL4_InvalidCapability;
-            current_syscall_error.invalidCapNumber = 1;
+        //TODO: Gets kinda weird when considering variable size pages
+        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) || !IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage))) {
+            userError("VSpaceRoot Unmap: Is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        frameSize = cap_frame_cap_get_capFSize(base_cap);
-
-        vptr_t vaddr[3000];
-
-        for (int i = 0; i < n_pages; i++) {
-            lookupSlot_raw_ret_t lu_ret_cap = lookupSlot(NODE_STATE(ksCurThread), base_cptr + i);
-
-            if (lu_ret_cap.status != EXCEPTION_NONE) {
-                current_syscall_error.type = seL4_FailedLookup;
-                current_syscall_error.failedLookupWasSource = false;
-                return EXCEPTION_SYSCALL_ERROR;
-            }
-
-            cap_t frame_cap = lu_ret_cap.slot->cap;
-
-            if (cap_get_capType(frame_cap) != cap_frame_cap) {
-                userError("VSpaceRoot Unmap: Cap in range does not refer to a frame");
-                current_syscall_error.type = seL4_InvalidCapability;
-                current_syscall_error.invalidCapNumber = base_cptr + i;
-                return EXCEPTION_SYSCALL_ERROR;
-            }
-
-            vaddr[i] =  cap_frame_cap_get_capFMappedAddress(frame_cap);
+        if (unlikely(base_vaddr > USER_TOP || end_vaddr > USER_TOP)) {
+            userError("VSpaceRoot Unmap: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (frameSize == ARMSmallPage) {
-            pte_t *pages[3000];
+        curr_vaddr = base_vaddr;
 
-            for (int i = 0; i < n_pages; i++) {
-                lookupPTSlot_ret_t lu_ret = lookupPTSlot(vspaceRoot, vaddr[i]);
+        while (curr_vaddr < end_vaddr) {
+            lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
 
-                if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
-                    current_syscall_error.type = seL4_FailedLookup;
-                    current_syscall_error.failedLookupWasSource = false;
-                    return EXCEPTION_SYSCALL_ERROR;
-                }
-
-                pages[i] = lu_ret.ptSlot;
+            if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
+                *(lu_ret_pt.ptSlot) = pte_invalid_new();
+                cleanByVA_PoU((vptr_t) lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
+                invalidateTLBByASIDVA(asid, curr_vaddr);
+                curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+                continue;
             }
 
-            for (int i = 0; i < n_pages; i++) {
-                *(pages[i]) = pte_invalid_new();
-                cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, vaddr[i]);
+            lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
+
+            if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
+                *(lu_ret_pd.pdSlot) = pde_invalid_new();
+                cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
+                invalidateTLBByASIDVA(asid, curr_vaddr);
+                curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
+                continue;
             }
 
-        } else if (frameSize == ARMLargePage) {
-            pde_t *pages[3000];
-
-            for (int i = 0; i < n_pages; i++) {
-                lookupPDSlot_ret_t lu_ret = lookupPDSlot(vspaceRoot, vaddr[i]);
-
-                if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
-                    current_syscall_error.type = seL4_FailedLookup;
-                    current_syscall_error.failedLookupWasSource = false;
-                    return EXCEPTION_SYSCALL_ERROR;
-                }
-
-                pages[i] = lu_ret.pdSlot;
+            lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, curr_vaddr);
+            if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
+                *(lu_ret_pud.pudSlot) = pude_invalid_new();
+                cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
+                invalidateTLBByASIDVA(asid, curr_vaddr);
+                curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
+                continue;
             }
 
-            for (int i = 0; i < n_pages; i++) {
-                *(pages[i]) = pde_invalid_new();
-                cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, vaddr[i]);
-            }
-
-        } else {
-            pude_t *pages[3000];
-
-            for (int i = 0; i < n_pages; i++) {
-                lookupPUDSlot_ret_t lu_ret = lookupPUDSlot(vspaceRoot, vaddr[i]);
-
-                if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
-                    current_syscall_error.type = seL4_FailedLookup;
-                    current_syscall_error.failedLookupWasSource = false;
-                    return EXCEPTION_SYSCALL_ERROR;
-                }
-
-                pages[i] = lu_ret.pudSlot;
-            }
-
-            for (int i = 0; i < n_pages; i++) {
-                *(pages[i]) = pude_invalid_new();
-                cleanByVA_PoU((vptr_t) pages[i], pptr_to_paddr(pages[i]));
-                invalidateTLBByASIDVA(asid, vaddr[i]);
+            if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
+                curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+            } else if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_pd_ptr_get_present(lu_ret_pud.pudSlot)) {
+                curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
+            } else {
+                curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
             }
         }
+
 
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return EXCEPTION_NONE;

@@ -214,10 +214,10 @@
             <description>
                 Unmap a range of pages in this vspace
             </description>
-            <param dir="in" name="base_page" type="seL4_CPtr"
-                   description="The first page which should be unmapped"/>
-            <param dir="in" name="npages" type="seL4_Word"
-                   description="The number of pages to unmap"/>
+            <param dir="in" name="start_vaddr" type="seL4_Word"
+                   description="The starting address of the first page to be unmapped. Should be page aligned"/>
+            <param dir="in" name="end_vaddr" type="seL4_Word"
+                   description="The end of the range (non-inclusive). Should be page-aligned"/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
@@ -226,8 +226,16 @@
             <error name="seL4_InvalidCapability">
                 <description>
                     The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
-                    Or, <texttt text="base_page"/> is a CPtr to a capability of the wrong type.
-                    Or, one of the the pages in the provided range is not already mapped.
+                </description>
+            </error>
+            <error name="seL4_IllegalOperation">
+            <description>
+                The address range overlaps into the kernel virtual address range.
+            </description>
+            </error>
+            <error name="seL4_AlignmentError">
+                <description>
+                    The start vaddr does is not page aligned.
                 </description>
             </error>
         </method>
