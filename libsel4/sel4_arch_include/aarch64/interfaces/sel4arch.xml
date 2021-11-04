@@ -218,6 +218,8 @@
                    description="The starting address of the first page to be unmapped. Should be page aligned"/>
             <param dir="in" name="end_vaddr" type="seL4_Word"
                    description="The end of the range (non-inclusive). Should be page-aligned"/>
+            <param dir="in" name="protect" type="seL4_Bool"
+                   description="If this is set, we protect pages as seL4_ReadOnly (if applicable) instead of unmapping them"/>"/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
