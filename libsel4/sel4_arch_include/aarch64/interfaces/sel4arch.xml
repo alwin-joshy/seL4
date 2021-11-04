@@ -218,8 +218,6 @@
                    description="The starting address of the first page to be unmapped. Should be page aligned"/>
             <param dir="in" name="end_vaddr" type="seL4_Word"
                    description="The end of the range (non-inclusive). Should be page-aligned"/>
-            <param dir="in" name="protect" type="seL4_Bool"
-                   description="If this is set, we protect pages as seL4_ReadOnly (if applicable) instead of unmapping them"/>"/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
@@ -237,7 +235,42 @@
             </error>
             <error name="seL4_AlignmentError">
                 <description>
-                    The start vaddr does is not page aligned.
+                    The start vaddr or end vaddr is not page aligned.
+                </description>
+            </error>
+        </method>
+        <method id="ARMVspaceRange_Protect" name = "Range_Protect"
+                manual_name="Vspace Range Protect" manual_label="vspace_range_protect">
+            <brief>
+                Protect a range of pages in this vspace.
+            </brief>
+            <description>
+                Goes through each mapped page in the range and sets them seL4_ReadOnly if they have they are currently
+                seL4_ReadWrite.
+            </description>
+            <param dir="in" name="start_vaddr" type="seL4_Word"
+                   description="The starting address of the first page to be protected. Should be page aligned"/>
+            <param dir="in" name="end_vaddr" type="seL4_Word"
+                   description="The end of the range (non-inclusive). Should be page-aligned"/>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+            <error name="seL4_IllegalOperation">
+                <description>
+                    The address range overlaps into the kernel virtual address range.
+                    Or, the end vaddr is before the start vaddr.
+                </description>
+            </error>
+            <error name="seL4_AlignmentError">
+                <description>
+                    The start vaddr or end vaddr is not page aligned.
                 </description>
             </error>
         </method>

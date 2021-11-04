@@ -1758,25 +1758,159 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
 
     switch (invLabel) {
-    case ARMVspaceRange_Unmap: {
+    case ARMVspaceRange_Protect: {
         asid_t asid;
         vspace_root_t *vspaceRoot;
         vptr_t base_vaddr, end_vaddr, curr_vaddr;
         findVSpaceForASID_ret_t find_ret;
-        bool_t protect;
 
-        if (length < 3) {
+        if (length < 2) {
             userError("VspaceRoot Unmap: Truncated message.");
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-
-        /* Don't need to do any validity checks on this one because we already know that it is valid from the
-         * checks prior to it being passed in */
         base_vaddr = getSyscallArg(0, buffer);
         end_vaddr = getSyscallArg(1, buffer);
-        protect = getSyscallArg(2, buffer);
+
+        if (unlikely(!isValidNativeRoot(cap))) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the supplied pgd is ok */
+        vspaceRoot = cap_vtable_root_get_basePtr(cap);
+        asid = cap_vtable_root_get_mappedASID(cap);
+
+        find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpaceRoot Unmap: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpaceRoot Unmap: Invalid VSpace Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(base_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(base_vaddr, ARMHugePage))) {
+            userError("VSpaceRoot Unmap: Start vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
+            userError("VSpaceRoot Unmap: End vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(end_vaddr <= base_vaddr)) {
+            userError("VSpaceRoot Unmap: end_vaddr must be after start_vaddr.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(base_vaddr > USER_TOP || end_vaddr > USER_TOP)) {
+            userError("VSpaceRoot Unmap: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        curr_vaddr = base_vaddr;
+        while (curr_vaddr < end_vaddr) {
+            /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
+            lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+            if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
+                if (pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
+                    *(lu_ret_pt.ptSlot) = protected_small_page(lu_ret_pt.ptSlot);
+                    cleanByVA_PoU((vptr_t)
+                    lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
+                    invalidateTLBByASIDVA(asid, curr_vaddr);
+                }
+                curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+                continue;
+            }
+
+            /* Check pde for curr_vaddr*/
+            lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
+            /* If a large page is mapped for this vaddr */
+            if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
+                /* An issue with large pages is that if the end_vaddr is small page aligned, and is contained
+                 * somewhere within the large page, we probably don't want to unmap it */
+                if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
+                    break;
+                }
+
+                if (pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot) == APFromVMRights(VMReadWrite)) {
+                    *(lu_ret_pd.pdSlot) = protected_large_page(lu_ret_pd.pdSlot);
+                    cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
+                    invalidateTLBByASIDVA(asid, curr_vaddr);
+                }
+
+                curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
+                continue;
+                /* If there is a page table mapped for this vaddr range, we know that there is no large pages in this
+                 * vaddr range, so we move to the next pte */
+            } else if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
+                curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+                continue;
+            }
+
+            /* Check pude for curr_vaddr*/
+            lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, curr_vaddr);
+
+            /* If a large page is mapped for this vaddr */
+            if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
+                /* An issue with huge pages is that if the end_vaddr is small/large page aligned, and is contained
+                * somewhere within the huge page, we probably don't want to unmap it */
+                if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
+                    break;
+                }
+
+                if (pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot) == APFromVMRights(VMReadWrite)){
+                    *(lu_ret_pud.pudSlot) = protected_huge_page(lu_ret_pud.pudSlot);
+                    cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
+                    invalidateTLBByASIDVA(asid, curr_vaddr);
+                }
+
+                curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
+                continue;
+                /* If there is a PD mapped for this vaddr range, we know that there is no huge pages in this
+                 * range, so we move to the next pd in the pud */
+            } else if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_pd_ptr_get_present(lu_ret_pud.pudSlot)) {
+                curr_vaddr += (1 << pageBitsForSize(ARMLargePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMLargePage)));
+                continue;
+            }
+
+            /* If there are no mappings for the PUD, then we should move to the next PUD and check that until we
+             * reach the end_vaddr */
+            curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
+        }
+
+    }
+    case ARMVspaceRange_Unmap: {
+        asid_t asid;
+        vspace_root_t *vspaceRoot;
+        vptr_t base_vaddr, end_vaddr, curr_vaddr;
+        findVSpaceForASID_ret_t find_ret;
+
+        if (length < 2) {
+            userError("VspaceRoot Unmap: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        base_vaddr = getSyscallArg(0, buffer);
+        end_vaddr = getSyscallArg(1, buffer);
 
         if (unlikely(!isValidNativeRoot(cap))) {
             current_syscall_error.type = seL4_InvalidCapability;
@@ -1836,12 +1970,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
 
             if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
-                if (protect && pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
-                    *(lu_ret_pt.ptSlot) = protected_small_page(lu_ret_pt.ptSlot);
-                } else {
-                    *(lu_ret_pt.ptSlot) = pte_invalid_new();
-                }
-
+                *(lu_ret_pt.ptSlot) = pte_invalid_new();
                 cleanByVA_PoU((vptr_t) lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
                 invalidateTLBByASIDVA(asid, curr_vaddr);
                 curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
@@ -1859,12 +1988,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                     break;
                 }
 
-                if (protect && pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot) == APFromVMRights(VMReadWrite)) {
-                    *(lu_ret_pd.pdSlot) = protected_large_page(lu_ret_pd.pdSlot);
-                } else {
-                    *(lu_ret_pd.pdSlot) = pde_invalid_new();
-                }
-
+                *(lu_ret_pd.pdSlot) = pde_invalid_new();
                 cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
                 invalidateTLBByASIDVA(asid, curr_vaddr);
                 curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
@@ -1887,13 +2011,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                     break;
                 }
 
-                if (protect && pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot) == APFromVMRights(VMReadWrite)){
-                    *(lu_ret_pud.pudSlot) = protected_huge_page(lu_ret_pud.pudSlot);
-                }
-                else {
-                    *(lu_ret_pud.pudSlot) = pude_invalid_new();
-                }
-
+                *(lu_ret_pud.pudSlot) = pude_invalid_new();
                 cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
                 invalidateTLBByASIDVA(asid, curr_vaddr);
                 curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
