@@ -7,9 +7,8 @@
 ''' generate a c header file from the device tree '''
 import argparse
 import builtins
+import jinja2
 from typing import Dict, List
-from jinja2 import Environment, BaseLoader
-
 from hardware import config, fdt
 from hardware.utils import memory, rule
 
@@ -174,7 +173,7 @@ def get_interrupts(tree: fdt.FdtParser, rules: rule.HardwareYaml) -> List:
     return ret
 
 
-def create_c_header_file(config, kernel_irqs: List, kernel_macros: Dict,
+def create_c_header_file(args, kernel_irqs: List, kernel_macros: Dict,
                          kernel_regions: List, physBase: int, physical_memory,
                          outputStream):
 
@@ -185,7 +184,7 @@ def create_c_header_file(config, kernel_irqs: List, kernel_macros: Dict,
     template_args = dict(
         builtins.__dict__,
         **{
-            'config': config,
+            'args': args,
             'kernel_irqs': kernel_irqs,
             'kernel_macros': kernel_macros,
             'kernel_regions': kernel_regions,
@@ -197,7 +196,7 @@ def create_c_header_file(config, kernel_irqs: List, kernel_macros: Dict,
         outputStream.write(data)
 
 
-def run(tree: FdtParser, hw_yaml: HardwareYaml, config: Config, args: argparse.Namespace):
+def run(tree: fdt.FdtParser, hw_yaml: rule.HardwareYaml, config: config.Config, args: argparse.Namespace):
     if not args.header_out:
         raise ValueError('You need to specify a header-out to use c header output')
 
@@ -205,7 +204,7 @@ def run(tree: FdtParser, hw_yaml: HardwareYaml, config: Config, args: argparse.N
     kernel_regions, kernel_macros = get_kernel_devices(tree, hw_yaml)
 
     create_c_header_file(
-        config,
+        args,
         get_interrupts(tree, hw_yaml),
         kernel_macros,
         kernel_regions,
