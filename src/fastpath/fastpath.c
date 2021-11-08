@@ -21,7 +21,6 @@ static inline
 FORCE_INLINE
 #endif
 void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
-    cptr_t handlerCPtr;
     cap_t handler_cap;
     endpoint_t *ep_ptr;
     tcb_t *dest;
@@ -33,8 +32,13 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     pde_t stored_hw_asid;
     dom_t dom;
 
+#ifdef CONFIG_KERNEL_MCS
+    handler_cap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbFaultHandler)->cap;
+#else
+    cptr_t handlerCPtr;
     handlerCPtr = NODE_STATE(ksCurThread)->tcbFaultHandler;
     handler_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap, handlerCPtr);
+#endif
 
     if (unlikely(!cap_capType_equals(handler_cap, cap_endpoint_cap) ||
         !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
@@ -248,9 +252,26 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
             break;
         }
     }
+#elif CONFIG_ARCH_RISCV64
+    uint64_t addr;
+
+    addr = read_stval();
+
+    switch (vm_faultType) {
+    case RISCVLoadPageFault:
+    case RISCVLoadAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
+        return EXCEPTION_FAULT;
+    case RISCVStorePageFault:
+    case RISCVStoreAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
+        return EXCEPTION_FAULT;
+    case RISCVInstructionPageFault:
+    case RISCVInstructionAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
+        return EXCEPTION_FAULT;
 #endif
 
-#ifdef CONFIG_ARCH_ARM
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     word_t ipa, va;
     va = getRestartPC(NODE_STATE(ksCurThread));
@@ -262,12 +283,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
-#elif CONFIG_ARCH_X86_64
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread)));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
-#endif
 
     info = seL4_MessageInfo_new(seL4_Fault_get_seL4_FaultType(NODE_STATE(ksCurThread)->tcbFault), 0, 0, 4);
 

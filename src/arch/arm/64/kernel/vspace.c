@@ -1690,66 +1690,16 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
-/* TODO: Ideally, I should be able to just set the correct bits in the entry but bitwise operations :/*/
-static pte_t protected_small_page(pte_t *pte) {
-    return pte_new (
-            pte_ptr_get_UXN(pte),
-            pte_ptr_get_page_base_address(pte),
-    #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            0,
-    #else
-            1,                          /* not global */
-    #endif
-            1,                              /* access flag */
-            pte_ptr_get_SH(pte),         /* Inner-shareable if SMP enabled, otherwise unshared */
-            APFromVMRights(VMReadOnly),
-    #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            S2_NORMAL,
-    #else
-            NORMAL,
-    #endif
-            RESERVED
-    );
+static void protected_small_page(pte_t *pte) {
+    pte->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
 static pde_t protected_large_page(pde_t *pde) {
-    return pde_pde_large_new (
-            pde_pde_large_ptr_get_UXN(pde),
-            pde_pde_large_ptr_get_page_base_address(pde),
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            0,
-#else
-            1,                          /* not global */
-#endif
-            1,                              /* access flag */
-            pde_pde_large_ptr_get_SH(pde),         /* Inner-shareable if SMP enabled, otherwise unshared */
-            APFromVMRights(VMReadOnly),
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            S2_NORMAL,
-#else
-            NORMAL
-#endif
-    );
+    pde->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
 static pude_t protected_huge_page(pude_t *pude) {
-    return pude_pude_1g_new (
-            pude_pude_1g_ptr_get_UXN(pude),
-            pude_pude_1g_ptr_get_page_base_address(pude),
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            0,
-#else
-            1,                          /* not global */
-#endif
-            1,                              /* access flag */
-            pude_pude_1g_ptr_get_SH(pude),         /* Inner-shareable if SMP enabled, otherwise unshared */
-            APFromVMRights(VMReadOnly),
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            S2_NORMAL
-#else
-            NORMAL
-#endif
-    );
+    pude->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
@@ -1831,7 +1781,8 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
             if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
                 if (pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
-                    *(lu_ret_pt.ptSlot) = protected_small_page(lu_ret_pt.ptSlot);
+                    //*(lu_ret_pt.ptSlot) = protected_small_page(lu_ret_pt.ptSlot);
+                    protected_small_page(lu_ret_pt.ptSlot);
                     cleanByVA_PoU((vptr_t)
                     lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
                     invalidateTLBByASIDVA(asid, curr_vaddr);

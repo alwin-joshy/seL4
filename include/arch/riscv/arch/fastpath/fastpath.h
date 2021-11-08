@@ -20,6 +20,14 @@
 void slowpath(syscall_t syscall)
 NORETURN;
 
+void vm_fault_slowpath(vm_fault_type_t type)
+NORETURN;
+
+static inline
+void fastpath_vm_fault(vm_fault_type_t type)
+NORETURN;
+
+
 static inline
 void fastpath_call(word_t cptr, word_t r_msgInfo)
 NORETURN;
