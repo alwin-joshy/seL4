@@ -120,11 +120,7 @@ static const p_region_t BOOT_RODATA avail_p_regs[] = {
 '''
 
 
-<<<<<<< HEAD
-def get_kernel_devices(tree: FdtParser, hw_yaml: HardwareYaml) -> (List, Dict):
-=======
 def get_kernel_devices(tree: fdt.FdtParser, rules: rule.HardwareYaml) -> (List, Dict):
->>>>>>> a16ec5ef7 (python: add type information)
     '''
     Given a device tree and a set of rules, returns a tuple (groups, offsets).
 
@@ -155,11 +151,7 @@ def get_kernel_devices(tree: fdt.FdtParser, rules: rule.HardwareYaml) -> (List, 
     return (groups, offsets)
 
 
-<<<<<<< HEAD
-def get_interrupts(tree: FdtParser, hw_yaml: HardwareYaml) -> List:
-=======
 def get_interrupts(tree: fdt.FdtParser, rules: rule.HardwareYaml) -> List:
->>>>>>> a16ec5ef7 (python: add type information)
     ''' Get dict of interrupts, {label: KernelInterrupt} from the DT and hardware rules. '''
     kernel_devices = tree.get_kernel_devices()
 
