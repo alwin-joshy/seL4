@@ -1694,11 +1694,11 @@ static void protected_small_page(pte_t *pte) {
     pte->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
-static pde_t protected_large_page(pde_t *pde) {
+static void protected_large_page(pde_t *pde) {
     pde->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
-static pude_t protected_huge_page(pude_t *pude) {
+static void protected_huge_page(pude_t *pude) {
     pude->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
@@ -1781,7 +1781,6 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
             if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
                 if (pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
-                    //*(lu_ret_pt.ptSlot) = protected_small_page(lu_ret_pt.ptSlot);
                     protected_small_page(lu_ret_pt.ptSlot);
                     cleanByVA_PoU((vptr_t)
                     lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
@@ -1802,15 +1801,15 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                 }
 
                 if (pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot) == APFromVMRights(VMReadWrite)) {
-                    *(lu_ret_pd.pdSlot) = protected_large_page(lu_ret_pd.pdSlot);
+                    protected_large_page(lu_ret_pd.pdSlot);
                     cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
                     invalidateTLBByASIDVA(asid, curr_vaddr);
                 }
 
                 curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
                 continue;
-                /* If there is a page table mapped for this vaddr range, we know that there is no large pages in this
-                 * vaddr range, so we move to the next pte */
+                /* If there is a page table mapped for this vaddr range, we know that there is no large page for this
+                 * this vaddr, so we move to the next pte */
             } else if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
                 curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
                 continue;
@@ -1828,7 +1827,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                 }
 
                 if (pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot) == APFromVMRights(VMReadWrite)){
-                    *(lu_ret_pud.pudSlot) = protected_huge_page(lu_ret_pud.pudSlot);
+                    protected_huge_page(lu_ret_pud.pudSlot);
                     cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
                     invalidateTLBByASIDVA(asid, curr_vaddr);
                 }
