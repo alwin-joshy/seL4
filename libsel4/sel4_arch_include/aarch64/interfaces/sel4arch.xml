@@ -274,6 +274,55 @@
                 </description>
             </error>
         </method>
+        <method id = "ARMVspacePage_Map" name = "Page_Map"
+                manual_name="Vspace page map" manual_label="vspace_page_map">
+            <brief>
+                Map a frame to a virtual address in the provided vspace. 
+            </brief>
+            <description>
+                Given a virtual address in the vspace, maps this virtual address to with a given capability. 
+                If the given virtual adress is already mapped to a different frame, this mapping will be overwritten.
+            </description>
+            <param dir="in" name="frame" type="seL4_CPtr"
+                    description="A capability to the frame which is to be used for the mapping"/>
+            <param dir="in" name="vaddr" type="seL4_Word"
+                    description="The virtual address of the start of the page which is to be mapped. Must be page-aligned"/>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                    "Rights for the mapping.<docref>Possible values for this type are given in <autoref label="sec:cap_rights"/>  .</docref>"
+                </description>
+            </param>
+            <param dir="in" name="attr" type="seL4_ARM_VMAttributes">
+                <description>
+                    "VM Attributes for the mapping.<docref>Possible values for this type are given in <autoref label="ch:vspace"/>  .</docref>"
+                </description>
+            </param>
+            <error name="seL4_AlignmentError">
+            <description>
+                The <texttt text="vaddr"/> is not aligned to the page size of <texttt text="frame"/>.
+            </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> does not have a paging structure at the required level mapped at <texttt text="vaddr"/>.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+                <description>
+                    The <texttt text="frame"/> is already mapped in <texttt text="_service"/> at a different virtual address.
+                    Or, <texttt text="vaddr"/> is in the kernel virtual address range.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="frame"/> or <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                    Or, <texttt text="frame"/> is already mapped in a different VSpace.
+                    Or, <texttt text="frame"/> is currently being used for a mapping (unmap first).
+                </description>
+            </error>
+        </method>
     </interface>
     <interface name="seL4_ARM_PageUpperDirectory" manual_name="Page Upper Directory"
         cap_description="Capability to the upper page directory being operated on.">
