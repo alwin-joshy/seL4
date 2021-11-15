@@ -216,8 +216,8 @@
             </description>
             <param dir="in" name="start_vaddr" type="seL4_Word"
                    description="The starting address of the first page to be unmapped. Should be page aligned"/>
-            <param dir="in" name="end_vaddr" type="seL4_Word"
-                   description="The end of the range (non-inclusive). Should be page-aligned"/>
+            <param dir="in" name="n_pages" type="seL4_Uint8"
+                   description="The maximum number of pages (of any size) to examine. Can be at most 32 pages. "/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
@@ -228,14 +228,15 @@
                     The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
                 </description>
             </error>
-            <error name="seL4_IllegalOperation">
+            <error name="seL4_InvalidArgument">
             <description>
-                The address range overlaps into the kernel virtual address range.
+                <texttt text="start_vaddr"/> is greater than the user addressable region. 
+                Or, n_pages is greater than 32 pages.
             </description>
             </error>
             <error name="seL4_AlignmentError">
                 <description>
-                    The start vaddr or end vaddr is not page aligned.
+                    The start vaddr is not page aligned.
                 </description>
             </error>
         </method>
@@ -250,8 +251,8 @@
             </description>
             <param dir="in" name="start_vaddr" type="seL4_Word"
                    description="The starting address of the first page to be protected. Should be page aligned"/>
-            <param dir="in" name="end_vaddr" type="seL4_Word"
-                   description="The end of the range (non-inclusive). Should be page-aligned"/>
+            <param dir="in" name="n_pages" type="seL4_Uint8"
+                   description="The maximum number of pages (of any size) to examine. Can be at most 32 pages."/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
@@ -262,11 +263,11 @@
                     The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
                 </description>
             </error>
-            <error name="seL4_IllegalOperation">
-                <description>
-                    The address range overlaps into the kernel virtual address range.
-                    Or, the end vaddr is before the start vaddr.
-                </description>
+            <error name="seL4_InvalidArgument">
+            <description>
+                <texttt text="start_vaddr"/> is greater than the user addressable region. 
+                Or, n_pages is greater than 32 pages.
+            </description>
             </error>
             <error name="seL4_AlignmentError">
                 <description>

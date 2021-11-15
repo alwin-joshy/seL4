@@ -1702,12 +1702,22 @@ static void protected_huge_page(pude_t *pude) {
     pude->words[0] |= (APFromVMRights(VMReadOnly) & 0x3ull) << 6;
 }
 
-static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
+// static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
+static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages) {
     vptr_t curr_vaddr = base_vaddr;
 
-    while (curr_vaddr < end_vaddr) {
+    // while (curr_vaddr < end_vaddr) {
+    // while (i < n_pages) {
+    for (int i = 0; i < n_pages; i++) {
         /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+        // User top is on the boundary of all page sizes  i.e. it is the start of a small, large and huge pages so if the base address of the page
+        // is within the user addressable region, so will the end of the page.
+
+        if (curr_vaddr > USER_TOP) {
+            break;
+        }
 
         if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
             if (pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
@@ -1716,7 +1726,7 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, v
             }
             curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
             continue;
-        }
+        } 
 
         /* Check pde for curr_vaddr*/
         lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
@@ -1724,9 +1734,9 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, v
         if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
             /* An issue with large pages is that if the end_vaddr is small page aligned, and is contained
              * somewhere within the large page, we probably don't want to unmap it */
-            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
-                break;
-            }
+            // if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
+            //     break;
+            // }
 
             if (pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot) == APFromVMRights(VMReadWrite)) {
                 protected_large_page(lu_ret_pd.pdSlot);
@@ -1749,9 +1759,9 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, v
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
             /* An issue with huge pages is that if the end_vaddr is small/large page aligned, and is contained
             * somewhere within the huge page, we probably don't want to unmap it */
-            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
-                break;
-            }
+            // if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
+            //     break;
+            // }
 
             if (pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot) == APFromVMRights(VMReadWrite)){
                 protected_huge_page(lu_ret_pud.pudSlot);
@@ -1774,14 +1784,24 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, v
 
 }
 
-static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
+// static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
+static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages) {
     vptr_t curr_vaddr = base_vaddr;
 
-    while (curr_vaddr < end_vaddr) {
+    //while (curr_vaddr < end_vaddr) {
+    for (int i = 0; i < n_pages; i++) {
+        // In each iteration of this loop, we are going to be considering exactly one page (whether this is small, large or huge)
+        // Doing it this way instead of the virtual address way makes it possible to walk the page table even if it has large or huge
+        // pages. It introduces a couple of new issues, mainly the fact that the user doesn't really know where it unmapped the pages from.
+        
+        if (unlikely(curr_vaddr > USER_TOP)) {
+            break;
+        }
+
         /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
 
-        if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
+        if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) { // PTE exists and has a mapping
             *(lu_ret_pt.ptSlot) = pte_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
@@ -1795,16 +1815,12 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vpt
         if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
             /* An issue with large pages is that if the end_vaddr is small page aligned, and is contained
              * somewhere within the large page, we probably don't want to unmap it */
-            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
-                break;
-            }
 
             *(lu_ret_pd.pdSlot) = pde_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
             continue;
-            /* If there is a page table mapped for this vaddr range, we know that there is no large pages in this
-             * vaddr range, so we move to the next pte */
+            /* If there is a page table mapped for this vaddr, we move to the next pte */
         } else if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
             curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
             continue;
@@ -1817,16 +1833,13 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vpt
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
             /* An issue with huge pages is that if the end_vaddr is small/large page aligned, and is contained
             * somewhere within the huge page, we probably don't want to unmap it */
-            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
-                break;
-            }
 
             *(lu_ret_pud.pudSlot) = pude_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
             continue;
-            /* If there is a PD mapped for this vaddr range, we know that there is no huge pages in this
-             * range, so we move to the next pd in the pud */
+            /* If there is a PD mapped for this vaddr range, we know that there is no huge page for this vaddr
+             * so we move to the next pd in the pud */
         } else if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_pd_ptr_get_present(lu_ret_pud.pudSlot)) {
             curr_vaddr += (1 << pageBitsForSize(ARMLargePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMLargePage)));
             continue;
@@ -1834,9 +1847,13 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vpt
 
         /* If there are no mappings for the PUD, then we should move to the next PUD and check that until we
          * reach the end_vaddr */
+
+         // We consider this to be equivalent to an empty huge page
         curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
     }
 }
+
+#define MAX_RANGE 32
 
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
@@ -1847,7 +1864,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
     case ARMVspaceRange_Unmap: {
         asid_t asid;
         vspace_root_t *vspaceRoot;
-        vptr_t base_vaddr, end_vaddr;
+        vptr_t base_vaddr;//, end_vaddr;
         findVSpaceForASID_ret_t find_ret;
 
         if (length < 2) {
@@ -1857,7 +1874,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         base_vaddr = getSyscallArg(0, buffer);
-        end_vaddr = getSyscallArg(1, buffer);
+        // end_vaddr = getSyscallArg(1, buffer);
+        uint8_t n_pages = getSyscallArg(1, buffer);
+
+        // With n pages, this does not refer to the number of pages which are successfully unmapped/protected but rather
+        // the total number which are examined at all before quitting i.e. if 
+
+        // The issue with this is that it is less inuitive as the user doesn't really know which address range is now unmapped 
+        // (unless this is returned somehow) 
 
         if (unlikely(!isValidNativeRoot(cap))) {
             current_syscall_error.type = seL4_InvalidCapability;
@@ -1891,33 +1915,42 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
-                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
-            userError("VSpace: End vaddr is not page aligned");
-            current_syscall_error.type = seL4_AlignmentError;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        if (unlikely(end_vaddr <= base_vaddr)) {
-            userError("VSpace: end_vaddr must be after start_vaddr.");
-            current_syscall_error.type = seL4_IllegalOperation;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        if (unlikely(base_vaddr > USER_TOP || end_vaddr > USER_TOP)) {
+          if (unlikely(base_vaddr > USER_TOP)) {
             userError("VSpace: Exceed the user addressable region.");
-            current_syscall_error.type = seL4_IllegalOperation;
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
+
+        //If n_pages makes it go over USER_TOP, it still succeeds but it does not do any more unmappings for addresses
+        // greater than USER_TOP
+
+        if (unlikely(n_pages > MAX_RANGE)) {
+            userError("Vspace: Too many pages.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        // TODO: We need to set a limit on the size of the virtual address range so that this opreration doesn't go for too 
+        // long. There should be diminishing results for how much time it cuts off for increased pages, so I should test with different
+        // ranges to find the one which is most approprtiate to use in terms of not staying in the kernel for too long while still mainataining
+        // relatively good performance. 
 
         if (invLabel == ARMVspaceRange_Protect) {
-            performVspaceProtect(vspaceRoot, base_vaddr, end_vaddr);
+            // performVspaceProtect(vspaceRoot, base_vaddr, end_vaddr);
+            performVspaceProtect(vspaceRoot, base_vaddr, n_pages);
         } else {
-            performVspaceUnmap(vspaceRoot, base_vaddr, end_vaddr);
+            // performVspaceUnmap(vspaceRoot, base_vaddr, end_vaddr);
+            performVspaceUnmap(vspaceRoot, base_vaddr, n_pages);
+
         }
 
-        /* Instead if invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
+        /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
         invalidateTLBByASID(asid);
+
+        /* This makes the benchmarks much faster but there is no real way of knowing how it affects the system without macrobenchmarks
+           If they are choosing to do a range unmapping, they opt into the tlb flush. */
 
         //TODO: Can maybe do the same for the cache, but this one is a bit more sus
 
