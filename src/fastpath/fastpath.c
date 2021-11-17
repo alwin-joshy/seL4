@@ -235,7 +235,9 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
             break;
         }
     }
-#elif CONFIG_ARCH_X86_64
+#endif
+
+#ifdef CONFIG_ARCH_X86_64
     word_t addr;
     uint32_t fault;
 
@@ -252,24 +254,27 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
             break;
         }
     }
-#elif CONFIG_ARCH_RISCV64
+#endif
+
+#ifdef CONFIG_ARCH_RISCV64
     uint64_t addr;
 
     addr = read_stval();
 
-    switch (vm_faultType) {
+    switch (type) {
     case RISCVLoadPageFault:
     case RISCVLoadAccessFault:
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
-        return EXCEPTION_FAULT;
+        break;
     case RISCVStorePageFault:
     case RISCVStoreAccessFault:
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
-        return EXCEPTION_FAULT;
+        break;
     case RISCVInstructionPageFault:
     case RISCVInstructionAccessFault:
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
-        return EXCEPTION_FAULT;
+        break;
+    }
 #endif
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
