@@ -1705,6 +1705,7 @@ static void protected_huge_page(pude_t *pude) {
 // static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
 static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages) {
     vptr_t curr_vaddr = base_vaddr;
+    int num = 0;
 
     // while (curr_vaddr < end_vaddr) {
     // while (i < n_pages) {
@@ -1723,6 +1724,7 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, u
             if (pte_ptr_get_AP(lu_ret_pt.ptSlot) == APFromVMRights(VMReadWrite)) {
                 protected_small_page(lu_ret_pt.ptSlot);
                 cleanByVA_PoU((vptr_t)lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
+                num++;
             }
             curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
             continue;
@@ -1741,6 +1743,7 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, u
             if (pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot) == APFromVMRights(VMReadWrite)) {
                 protected_large_page(lu_ret_pd.pdSlot);
                 cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
+                num++;
             }
 
             curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
@@ -1766,6 +1769,7 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, u
             if (pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot) == APFromVMRights(VMReadWrite)){
                 protected_huge_page(lu_ret_pud.pudSlot);
                 cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
+                num++;
             }
 
             curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
@@ -1782,12 +1786,15 @@ static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, u
         curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
     }
 
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
 }
 
 // static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
 static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages) {
     vptr_t curr_vaddr = base_vaddr;
 
+    int num = 0;
     //while (curr_vaddr < end_vaddr) {
     for (int i = 0; i < n_pages; i++) {
         // In each iteration of this loop, we are going to be considering exactly one page (whether this is small, large or huge)
@@ -1805,6 +1812,7 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uin
             *(lu_ret_pt.ptSlot) = pte_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+            num++;
             continue;
         }
 
@@ -1819,6 +1827,7 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uin
             *(lu_ret_pd.pdSlot) = pde_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
+            num++;
             continue;
             /* If there is a page table mapped for this vaddr, we move to the next pte */
         } else if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
@@ -1837,6 +1846,7 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uin
             *(lu_ret_pud.pudSlot) = pude_invalid_new();
             cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
             curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
+            num++;
             continue;
             /* If there is a PD mapped for this vaddr range, we know that there is no huge page for this vaddr
              * so we move to the next pd in the pud */
@@ -1851,6 +1861,9 @@ static void performVspaceUnmap(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uin
          // We consider this to be equivalent to an empty huge page
         curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
     }
+
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
 }
 
 #define MAX_RANGE 32

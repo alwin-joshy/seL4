@@ -218,6 +218,10 @@
                    description="The starting address of the first page to be unmapped. Should be page aligned"/>
             <param dir="in" name="n_pages" type="seL4_Uint8"
                    description="The maximum number of pages (of any size) to examine. Can be at most 32 pages. "/>
+            <param dir="out" name="end_vaddr" type="seL4_Word"
+                   description="The staring address of the page after the one which was last considered "/>
+            <param dir="out" name="num" type="seL4_Uint8"
+                   description="The number of pages which were actually unmapped of the ones considered "/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
@@ -253,6 +257,10 @@
                    description="The starting address of the first page to be protected. Should be page aligned"/>
             <param dir="in" name="n_pages" type="seL4_Uint8"
                    description="The maximum number of pages (of any size) to examine. Can be at most 32 pages."/>
+            <param dir="out" name="end_vaddr" type="seL4_Word"
+                   description="The staring address of the page after the one which was last considered "/>
+            <param dir="out" name="num" type="seL4_Uint8"
+                   description="The number of pages which were actually protected of the ones considered "/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
