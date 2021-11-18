@@ -1878,7 +1878,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         uint8_t n_pages = getSyscallArg(1, buffer);
 
         // With n pages, this does not refer to the number of pages which are successfully unmapped/protected but rather
-        // the total number which are examined at all before quitting i.e. if 
+        // the total number which are examined at all before stopping.
 
         // The issue with this is that it is less inuitive as the user doesn't really know which address range is now unmapped 
         // (unless this is returned somehow) 
@@ -1949,10 +1949,8 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
         invalidateTLBByASID(asid);
 
-        /* This makes the benchmarks much faster but there is no real way of knowing how it affects the system without macrobenchmarks
-           If they are choosing to do a range unmapping, they opt into the tlb flush. */
-
-        //TODO: Can maybe do the same for the cache, but this one is a bit more sus
+        /* This makes the page mapping benchmarks much faster but there is no real way of knowing how it affects the
+         * system without macrobenchmarks. If they are choosing to do a range unmapping, they opt into the tlb flush. */
 
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return EXCEPTION_NONE;
