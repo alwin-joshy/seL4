@@ -1690,24 +1690,53 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
-static void protected_small_page(pte_t *pte, vm_rights_t strip_rights) {
-    pte->words[0] |= (~APFromVMRights(strip_rights) & pte_ptr_get_AP(pte) & 0x3ull) << 6;
+static vm_rights_t CONST VMRightsfromAP(uint64_t ap)
+{
+    if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
+        switch(ap) {
+            case 0: /*This case is weird it can also be VMKernelReadOnly*/
+                return VMKernelOnly;
+            case 1:
+                return VMReadOnly;
+            case 3:
+                return VMReadWrite;
+            default:
+                fail("Invalid AP");
+        }
+    } else {
+        switch(ap) {
+            case 0:
+                return VMKernelOnly;
+            case 1:
+                return VMReadWrite;
+            case 2:
+                return VMKernelReadOnly;
+            case 3:
+                return VMReadOnly;
+            default:
+                fail("Invalid AP");
+        }
+    }
 }
 
-static void protected_large_page(pde_t *pde, vm_rights_t strip_rights) {
-    pde->words[0] |= (~APFromVMRights(strip_rights) & pde_pde_large_ptr_get_AP(pde) & 0x3ull) << 6;
+static void protected_small_page(pte_t *pte, vm_rights_t vm_rights) {
+    pte->words[0] = ((pte->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
 }
 
-static void protected_huge_page(pude_t *pude, vm_rights_t strip_rights) {
-    pude->words[0] |= (~APFromVMRights(strip_rights) & pude_pude_1g_ptr_get_AP(pude) & 0x3ull) << 6;
+static void protected_large_page(pde_t *pde, vm_rights_t vm_rights) {
+    pte->words[0] = ((pte->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
+}
+
+static void protected_huge_page(pude_t *pude, vm_rights_t vm_rights) {
+    pte->words[0] = ((pte->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
 }
 
 // static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
-static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages, seL4_CapRights_t strip_rights) {
+static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
     int num = 0;
+    vm_rights_t vm_rights;
 
-    // while (curr_vaddr < end_vaddr) {
     // while (i < n_pages) {
     for (int i = 0; i < n_pages; i++) {
         // User top is on the boundary of all page sizes  i.e. it is the start of a small, large and huge pages so if the base address of the page
@@ -1719,12 +1748,12 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
 
         /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
-
-        vm_rights_t vm_rights = maskVMRights(VMReadWrite, strip_rights);
-
+        
         if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
-            // Check if it is seL4_NoRights
-            if ((strip_rights.words[0] | 0) != 0) {
+            // Check if it is seL4_Allrights
+            /* This is gross fix this later*/
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromAP(pte_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
                 protected_small_page(lu_ret_pt.ptSlot, vm_rights);
             } else {
                 *(lu_ret_pt.ptSlot) = pte_invalid_new();
@@ -1739,7 +1768,8 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
         lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
-            if ((strip_rights.words[0] | 0) != 0) {
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
                 protected_large_page(lu_ret_pd.pdSlot, vm_rights);
             } else {
                 *(lu_ret_pd.pdSlot) = pde_invalid_new();
@@ -1760,7 +1790,8 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
 
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
-            if ((strip_rights.words[0] | 0) != 0) {
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
                 protected_huge_page(lu_ret_pud.pudSlot, vm_rights);
             } else {
                 *(lu_ret_pud.pudSlot) = pude_invalid_new();
@@ -1780,7 +1811,7 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
          * reach the end_vaddr */
         curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
     }
-
+    userError("%d", num);
     setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
     setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
 }
@@ -1810,7 +1841,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         // Pass in no_rights to unmap and otherwise, the rights which should be stripped. 
         // i.e read_only to strip read rights, write_only to strip write rights etc. 
-        seL4_CapRights_t strip_rights = rightsFromWord(getSyscallArg(2, buffer)); 
+        seL4_CapRights_t rights = rightsFromWord(getSyscallArg(2, buffer)); 
 
         // With n pages, this does not refer to the number of pages which are successfully unmapped/protected but rather
         // the total number which are examined at all before stopping.
@@ -1873,7 +1904,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         // relatively good performance. 
 
 
-        performVspaceUnmapProtect(vspaceRoot, base_vaddr, n_pages, strip_rights);
+        performVspaceUnmapProtect(vspaceRoot, base_vaddr, n_pages, rights);
 
         /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
         invalidateTLBByASID(asid);

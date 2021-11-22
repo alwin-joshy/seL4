@@ -218,12 +218,18 @@
             </description>
             <param dir="in" name="start_vaddr" type="seL4_Word"
                    description="The starting address of the first page to be considered. Should be page aligned"/>
-            <param dir="in" name="n_pages" type="seL4_Uint8"
-                   description="The maximum number of pages (of any size) to examine. Can be at most 32 pages. "/>
-            <param dir="in" name="strip_rights" type="seL4_CapRights_t">
+            <param dir="in" name="n_pages" type="seL4_Uint8">
                 <description>
-                   The rights to strip from each page considered i.e. <texttt text="seL4_ReadOnly"/> strips read rights. 
-                   If <texttt text="seL4_NoRightd"/> is the provided argument, this call will unmap the page instead.
+                   The maximum number of pages (of any size) to examine. Can be at most 32 pages. If while traversing the page
+                   table, this range falls outside the user address space, will still unmap all the pages in the range before 
+                   the kernel address space and return success. 
+                </description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                   The minimum protection to protect each page to (if possible). For example <texttt text="seL4_CanRead"/>
+                   will make any read/write pages read only but will not change any pages that are already mapped with <texttt text="seL4_NoRights"/>. 
+                   If <texttt text="seL4_AllRights"/> is the provided protection level, this call will unmap the page instead.
                 </description>
             </param>
             <param dir="out" name="end_vaddr" type="seL4_Word"
