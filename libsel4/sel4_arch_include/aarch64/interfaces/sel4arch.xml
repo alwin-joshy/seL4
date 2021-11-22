@@ -206,18 +206,26 @@
                 </description>
             </error>
         </method>
-        <method id="ARMVspaceRange_Unmap" name = "Range_Unmap"
-            manual_name="Vspace Range Unmap" manual_label="vspace_range_unmap">
+
+
+        <method id="ARMVspaceRange_Remap" name = "Range_Remap"
+            manual_name="Vspace Range Remap" manual_label="vspace_range_remap">
             <brief>
-                Unmap a range of pages in this vspace
+                Unmap or protect a range of pages in this vspace
             </brief>
             <description>
-                Unmap a range of pages in this vspace
+                Unmap/protect a range of pages in this vspace. This call can only decrease access to pages, not increase. 
             </description>
             <param dir="in" name="start_vaddr" type="seL4_Word"
-                   description="The starting address of the first page to be unmapped. Should be page aligned"/>
+                   description="The starting address of the first page to be considered. Should be page aligned"/>
             <param dir="in" name="n_pages" type="seL4_Uint8"
                    description="The maximum number of pages (of any size) to examine. Can be at most 32 pages. "/>
+            <param dir="in" name="strip_rights" type="seL4_CapRights_t">
+                <description>
+                   The rights to strip from each page considered i.e. <texttt text="seL4_ReadOnly"/> strips read rights. 
+                   If <texttt text="seL4_NoRightd"/> is the provided argument, this call will unmap the page instead.
+                </description>
+            </param>
             <param dir="out" name="end_vaddr" type="seL4_Word"
                    description="The staring address of the page after the one which was last considered "/>
             <param dir="out" name="num" type="seL4_Uint8"
@@ -234,7 +242,7 @@
             </error>
             <error name="seL4_InvalidArgument">
             <description>
-                <texttt text="start_vaddr"/> is greater than the user addressable region. 
+                <texttt text="start_vaddr"/> is beyond than the user addressable region. 
                 Or, n_pages is greater than 32 pages.
             </description>
             </error>
@@ -244,53 +252,15 @@
                 </description>
             </error>
         </method>
-        <method id="ARMVspaceRange_Protect" name = "Range_Protect"
-                manual_name="Vspace Range Protect" manual_label="vspace_range_protect">
-            <brief>
-                Protect a range of pages in this vspace.
-            </brief>
-            <description>
-                Goes through each mapped page in the range and sets them seL4_ReadOnly if they have they are currently
-                seL4_ReadWrite.
-            </description>
-            <param dir="in" name="start_vaddr" type="seL4_Word"
-                   description="The starting address of the first page to be protected. Should be page aligned"/>
-            <param dir="in" name="n_pages" type="seL4_Uint8"
-                   description="The maximum number of pages (of any size) to examine. Can be at most 32 pages."/>
-            <param dir="out" name="end_vaddr" type="seL4_Word"
-                   description="The staring address of the page after the one which was last considered "/>
-            <param dir="out" name="num" type="seL4_Uint8"
-                   description="The number of pages which were actually protected of the ones considered "/>
-            <error name="seL4_FailedLookup">
-                <description>
-                    The <texttt text="_service"/> is not assigned to an ASID pool.
-                </description>
-            </error>
-            <error name="seL4_InvalidCapability">
-                <description>
-                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
-                </description>
-            </error>
-            <error name="seL4_InvalidArgument">
-            <description>
-                <texttt text="start_vaddr"/> is greater than the user addressable region. 
-                Or, n_pages is greater than 32 pages.
-            </description>
-            </error>
-            <error name="seL4_AlignmentError">
-                <description>
-                    The start vaddr or end vaddr is not page aligned.
-                </description>
-            </error>
-        </method>
         <method id = "ARMVspacePage_Map" name = "Page_Map"
                 manual_name="Vspace page map" manual_label="vspace_page_map">
             <brief>
                 Map a frame to a virtual address in the provided vspace. 
             </brief>
             <description>
-                Given a virtual address in the vspace, maps this virtual address to with a given capability. 
-                If the given virtual adress is already mapped to a different frame, this mapping will be overwritten.
+                Given a virtual address in the vspace, maps this virtual address to the frame with a given capability.  If the given virtual adress is already mapped to a different 
+                frame, this mapping will be overwritten. If <texttt text="frame"/> is already mapped to a page but does not back it, the mapping will be considered stale and 
+                overwritten. If the frame capability does back a page, the mapping will not be overwritten and this system call will fail. 
             </description>
             <param dir="in" name="frame" type="seL4_CPtr"
                     description="A capability to the frame which is to be used for the mapping"/>
@@ -319,7 +289,7 @@
             </error>
             <error name="seL4_InvalidArgument">
                 <description>
-                    The <texttt text="frame"/> is already mapped in <texttt text="_service"/> at a different virtual address.
+                    The <texttt text="frame"/> is already backing a different page in <texttt text="_service"/>.
                     Or, <texttt text="vaddr"/> is in the kernel virtual address range.
                 </description>
             </error>
@@ -328,7 +298,6 @@
                     The <texttt text="frame"/> or <texttt text="_service"/> is a CPtr to a capability of the wrong type.
                     Or, <texttt text="_service"/> is not assigned to an ASID pool.
                     Or, <texttt text="frame"/> is already mapped in a different VSpace.
-                    Or, <texttt text="frame"/> is currently being used for a mapping (unmap first).
                 </description>
             </error>
         </method>
