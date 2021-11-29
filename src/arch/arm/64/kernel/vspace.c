@@ -1724,27 +1724,25 @@ static void protected_small_page(pte_t *pte, vm_rights_t vm_rights) {
 }
 
 static void protected_large_page(pde_t *pde, vm_rights_t vm_rights) {
-    pte->words[0] = ((pte->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
+    pde->words[0] = ((pde->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
 }
 
 static void protected_huge_page(pude_t *pude, vm_rights_t vm_rights) {
-    pte->words[0] = ((pte->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
+    pude->words[0] = ((pude->words[0] & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull));
 }
 
-// static void performVspaceProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr) {
-static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages, seL4_CapRights_t rights) {
+#define MAX_RANGE 32
+
+static int performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
+// static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, uint8_t n_pages, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
     int num = 0;
     vm_rights_t vm_rights;
 
     // while (i < n_pages) {
-    for (int i = 0; i < n_pages; i++) {
+    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
         // User top is on the boundary of all page sizes  i.e. it is the start of a small, large and huge pages so if the base address of the page
         // is within the user addressable region, so will the end of the page.
-
-        if (curr_vaddr > USER_TOP) {
-            break;
-        }
 
         /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
@@ -1768,6 +1766,11 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
         lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
+            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
+                curr_vaddr = end_vaddr;
+                break; 
+            }
+
             if (rights.words[0] != 15) {
                 vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
                 protected_large_page(lu_ret_pd.pdSlot, vm_rights);
@@ -1790,6 +1793,11 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
 
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
+            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
+                curr_vaddr = end_vaddr;
+                break; 
+            }
+
             if (rights.words[0] != 15) {
                 vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
                 protected_huge_page(lu_ret_pud.pudSlot, vm_rights);
@@ -1811,12 +1819,11 @@ static void performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vad
          * reach the end_vaddr */
         curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
     }
-    userError("%d", num);
     setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
     setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
-}
 
-#define MAX_RANGE 32
+    return num;
+}
 
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
@@ -1826,7 +1833,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
     case ARMVspaceRange_Remap: {
         asid_t asid;
         vspace_root_t *vspaceRoot;
-        vptr_t base_vaddr;//, end_vaddr;
+        vptr_t base_vaddr, end_vaddr;
         findVSpaceForASID_ret_t find_ret;
 
         if (length < 2) {
@@ -1836,8 +1843,8 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         base_vaddr = getSyscallArg(0, buffer);
-        // end_vaddr = getSyscallArg(1, buffer);
-        uint8_t n_pages = getSyscallArg(1, buffer);
+        end_vaddr = getSyscallArg(1, buffer);
+        //uint8_t n_pages = getSyscallArg(1, buffer);
 
         // Pass in no_rights to unmap and otherwise, the rights which should be stripped. 
         // i.e read_only to strip read rights, write_only to strip write rights etc. 
@@ -1881,22 +1888,44 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-          if (unlikely(base_vaddr > USER_TOP)) {
+        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
+            userError("VSpace: End vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        // TODO: Add this to xml
+        if (base_vaddr > end_vaddr) {
+            userError("VSpace: End of the range must be after the start of the range.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (end_vaddr > USER_TOP) {
             userError("VSpace: Exceed the user addressable region.");
             current_syscall_error.type = seL4_InvalidArgument;
             current_syscall_error.invalidArgumentNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
+        // if (unlikely(base_vaddr > USER_TOP)) {
+        //     userError("VSpace: Exceed the user addressable region.");
+        //     current_syscall_error.type = seL4_InvalidArgument;
+        //     current_syscall_error.invalidArgumentNumber = 0;
+        //     return EXCEPTION_SYSCALL_ERROR;
+        // }
+
         //If n_pages makes it go over USER_TOP, it still succeeds but it does not do any more unmappings for addresses
         // greater than USER_TOP
 
-        if (unlikely(n_pages > MAX_RANGE)) {
-            userError("Vspace: Too many pages.");
-            current_syscall_error.type = seL4_InvalidArgument;
-            current_syscall_error.invalidArgumentNumber = 1;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
+        // if (unlikely(n_pages > MAX_RANGE)) {
+        //     userError("Vspace: Too many pages.");
+        //     current_syscall_error.type = seL4_InvalidArgument;
+        //     current_syscall_error.invalidArgumentNumber = 1;
+        //     return EXCEPTION_SYSCALL_ERROR;
+        // }
 
         // TODO: We need to set a limit on the size of the virtual address range so that this opreration doesn't go for too 
         // long. There should be diminishing results for how much time it cuts off for increased pages, so I should test with different
@@ -1904,10 +1933,10 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         // relatively good performance. 
 
 
-        performVspaceUnmapProtect(vspaceRoot, base_vaddr, n_pages, rights);
-
         /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
-        invalidateTLBByASID(asid);
+        if (performVspaceUnmapProtect(vspaceRoot, base_vaddr, end_vaddr, rights)) {
+           invalidateTLBByASID(asid);
+        }
 
         /* This makes the page mapping benchmarks much faster but there is no real way of knowing how it affects the
          * system without macrobenchmarks. If they are choosing to do a range unmapping, they opt into the tlb flush. */
@@ -1921,6 +1950,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         cte_t *frame_cte;
         cap_t frameCap;
         vspace_root_t *vspaceRoot;
+        vspace_root_t *frameRoot;
         asid_t asid, frame_asid;
         vm_rights_t vmRights;
         vm_page_size_t frameSize;
@@ -1979,14 +2009,23 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         /* In the case of remap, the cap should have a valid asid */
         frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&frameCap);
+        frameRoot = vspaceRoot;
 
         if (frame_asid != asidInvalid) {
             if (frame_asid != asid) {
-                userError("Vspace page map: Attempting to remap a frame that does not belong to the passed address space");
-                current_syscall_error.type = seL4_InvalidCapability;
-                current_syscall_error.invalidArgumentNumber = 1;
-                return EXCEPTION_SYSCALL_ERROR;
-            }
+                /* In the previous version, this would just fail. Now we get the vspaceroot for the asid it is int.
+                This allows us to reuse stale caps from other vspaces. */
+                find_ret = findVSpaceForASID(frame_asid);
+
+                if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+                    userError("VSpace Map: No VSpace for ASID");
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                frameRoot = find_ret.vspace_root;
+            } 
         } else {
             if (unlikely(vaddr + BIT(pageBitsForSize(frameSize)) - 1 > USER_TOP)) {
                 current_syscall_error.type = seL4_InvalidArgument;
@@ -1994,22 +2033,20 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                 return EXCEPTION_SYSCALL_ERROR;
             }
         }
-        /* TODO: Unmap the destination vaddr if it is currently mapped. This does not need to be done explicitly as the new 
-        mapping will just overwrite the previous one. */
-
+        
         base = pptr_to_paddr((void *)cap_frame_cap_get_capFBasePtr(frameCap));
 
         if (frameSize == ARMSmallPage) {
             lookupPTSlot_ret_t lu_ret;
-            // If the current address that is mapped by the frame is not the desired address
 
-            if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
-                lu_ret = lookupPTSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
+            // If the current address that is mapped by the frame is not the desired address
+            if (frame_asid != asidInvalid && cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lu_ret = lookupPTSlot(frameRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 // This failing just means that the page table structures required for the old mapping are no longer present, which we dont really care about
                 //as it means that the frame cannot be currently backing a page, which is all we care about . 
                 if (likely(lu_ret.status == EXCEPTION_NONE)) {
-                    // We check to ensure that the frame is not currently holding a mapping. If it is, we do not want to remap it without the user
+                    // We check to ensure that the frame is not currently backing a mapping. If it is, we do not want to remap it without the user
                     // doing an explicit unmapping first. 
                     if (pte_ptr_get_page_base_address(lu_ret.ptSlot) == base) {
                         userError("Attempting to remap an in-use frame to a different virtual address");

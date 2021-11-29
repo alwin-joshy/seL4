@@ -128,13 +128,11 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
 #ifdef CONFIG_KERNEL_MCS
     if (unlikely(dest->tcbSchedContext != NULL)) {
-        //userError("went into slowpath here 1\n");
         vm_fault_slowpath(type);
     }
 
     reply_t *reply = thread_state_get_replyObject_np(dest->tcbState);
     if (unlikely(reply == NULL)) {
-        //userError("went into slowpath here 1\n");
         vm_fault_slowpath(type);
     }
 #endif
@@ -289,7 +287,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
 
-    info = seL4_MessageInfo_new(seL4_Fault_get_seL4_FaultType(NODE_STATE(ksCurThread)->tcbFault), 0, 0, 4);
+    info = seL4_MessageInfo_new(seL4_Fault_VMFault, 0, 0, 4);//TODO: Use a definition
 
     thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
     switchToThread_fp(dest, cap_pd, stored_hw_asid);
@@ -801,14 +799,12 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
             word_t pc = getRestartPC(caller);
             setNextPC(caller, pc);
         }
+        
         caller->tcbFault = seL4_Fault_NullFault_new();
         /* Dest thread is set Running, but not queued. */
         thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
         switchToThread_fp(caller, cap_pd, stored_hw_asid);
-
-        msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
         restore_user_context();
-        //fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
     } else {
         /* I know there's no fault, so straight to the transfer. */
         fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);

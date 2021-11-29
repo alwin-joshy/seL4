@@ -215,16 +215,23 @@
             </brief>
             <description>
                 Unmap/protect a range of pages in this vspace. This call can only decrease access to pages, not increase. 
+                A single invocation will consider at most 32 pages before returning to the caller. It will return the virtual address
+                after the last page which was considered as well as the number of pages which were protected/unmapped.
             </description>
             <param dir="in" name="start_vaddr" type="seL4_Word"
                    description="The starting address of the first page to be considered. Should be page aligned"/>
-            <param dir="in" name="n_pages" type="seL4_Uint8">
+            <param dir="in" name="end_vaddr" type="seL4_Word">
+                <description>
+                   The end of the range to consider (non-inclusive). Should be page aligned. 
+                </description>
+            </param>
+            <!-- <param dir="in" name="n_pages" type="seL4_Uint8">
                 <description>
                    The maximum number of pages (of any size) to examine. Can be at most 32 pages. If while traversing the page
                    table, this range falls outside the user address space, will still unmap all the pages in the range before 
                    the kernel address space and return success. 
                 </description>
-            </param>
+            </param> -->
             <param dir="in" name="rights" type="seL4_CapRights_t">
                 <description>
                    The minimum protection to protect each page to (if possible). For example <texttt text="seL4_CanRead"/>
@@ -232,10 +239,10 @@
                    If <texttt text="seL4_AllRights"/> is the provided protection level, this call will unmap the page instead.
                 </description>
             </param>
-            <param dir="out" name="end_vaddr" type="seL4_Word"
+            <param dir="out" name="next_vaddr" type="seL4_Word"
                    description="The staring address of the page after the one which was last considered "/>
             <param dir="out" name="num" type="seL4_Uint8"
-                   description="The number of pages which were actually unmapped of the ones considered "/>
+                   description="The number of pages which were actually considered in the range (non-empty pages)"/>
             <error name="seL4_FailedLookup">
                 <description>
                     The <texttt text="_service"/> is not assigned to an ASID pool.
