@@ -1740,7 +1740,7 @@ static int performVspaceUnmapProtect(vspace_root_t *vspaceRoot, vptr_t base_vadd
     vm_rights_t vm_rights;
 
     // while (i < n_pages) {
-    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+    for (int i = 0; /*i < MAX_RANGE && */ curr_vaddr < end_vaddr; i++) {
         // User top is on the boundary of all page sizes  i.e. it is the start of a small, large and huge pages so if the base address of the page
         // is within the user addressable region, so will the end of the page.
 
@@ -2011,12 +2011,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&frameCap);
         frameRoot = vspaceRoot;
 
+
         if (frame_asid != asidInvalid) {
             if (frame_asid != asid) {
                 /* In the previous version, this would just fail. Now we get the vspaceroot for the asid it is int.
                 This allows us to reuse stale caps from other vspaces. */
                 find_ret = findVSpaceForASID(frame_asid);
 
+                //TODO: Is this check necessary 
                 if (unlikely(find_ret.status != EXCEPTION_NONE)) {
                     userError("VSpace Map: No VSpace for ASID");
                     current_syscall_error.type = seL4_FailedLookup;
@@ -2045,9 +2047,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
                 // This failing just means that the page table structures required for the old mapping are no longer present, which we dont really care about
                 //as it means that the frame cannot be currently backing a page, which is all we care about . 
-                if (likely(lu_ret.status == EXCEPTION_NONE)) {
-                    // We check to ensure that the frame is not currently backing a mapping. If it is, we do not want to remap it without the user
-                    // doing an explicit unmapping first. 
+                if (likely(lu_ret.status == EXCEPTION_NONE)) {        
                     if (pte_ptr_get_page_base_address(lu_ret.ptSlot) == base) {
                         userError("Attempting to remap an in-use frame to a different virtual address");
                         current_syscall_error.type = seL4_InvalidArgument;
@@ -2109,6 +2109,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             lookupPUDSlot_ret_t lu_ret;
 
             if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                
                 lu_ret = lookupPUDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 if (likely(lu_ret.status == EXCEPTION_NONE)) {
