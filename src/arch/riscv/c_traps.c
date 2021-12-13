@@ -111,6 +111,15 @@ void VISIBLE NORETURN c_handle_interrupt(void)
     UNREACHABLE();
 }
 
+void VISIBLE NORETURN vm_fault_slowpath(word_t scause) {
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.is_fastpath = 0;
+#endif
+    handleVMFaultEvent(scause);
+    restore_user_context();
+    UNREACHABLE();
+}
+
 void VISIBLE NORETURN c_handle_exception(void)
 {
     NODE_LOCK_SYS;
@@ -125,8 +134,14 @@ void VISIBLE NORETURN c_handle_exception(void)
     case RISCVLoadPageFault:
     case RISCVStorePageFault:
     case RISCVInstructionPageFault:
-        handleVMFaultEvent(scause);
-        break;
+#ifdef CONFIG_EXCEPTION_FASTPATH
+        fastpath_vm_fault(scause);
+        UNREACHABLE();
+#else
+        vm_fault_slowpath(scause);
+        UNREACHABLE();
+#endif
+        return;
     default:
 #ifdef CONFIG_HAVE_FPU
         if (!isFpuEnable()) {
@@ -218,3 +233,4 @@ void VISIBLE NORETURN c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t sy
 
     UNREACHABLE();
 }
+
