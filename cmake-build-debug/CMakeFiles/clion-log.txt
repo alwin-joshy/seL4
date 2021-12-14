@@ -1,0 +1,8 @@
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ -DCMAKE_DEPENDS_USE_COMPILER=FALSE -G "CodeBlocks - Unix Makefiles" /home/alwin/sel4/sel4bench/kernel
+CMake Error at configs/seL4Config.cmake:172 (message):
+  Variable 'KernelArch' is not set.
+Call Stack (most recent call first):
+  CMakeLists.txt:10 (include)
+
+
+-- Configuring incomplete, errors occurred!
