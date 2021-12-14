@@ -168,34 +168,34 @@ static word_t CONST APFromVMRights(vm_rights_t vm_rights)
     }
 }
 
-// static vm_rights_t CONST VMRightsfromAP(uint64_t ap)
-// {
-//     if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
-//         switch(ap) {
-//             case 0: /*This case is weird it can also be VMKernelReadOnly*/
-//                 return VMKernelOnly;
-//             case 1:
-//                 return VMReadOnly;
-//             case 3:
-//                 return VMReadWrite;
-//             default:
-//                 fail("Invalid AP");
-//         }
-//     } else {
-//         switch(ap) {
-//             case 0:
-//                 return VMKernelOnly;
-//             case 1:
-//                 return VMReadWrite;
-//             case 2:
-//                 return VMKernelReadOnly;
-//             case 3:
-//                 return VMReadOnly;
-//             default:
-//                 fail("Invalid AP");
-//         }
-//     }
-// }
+static vm_rights_t CONST VMRightsfromAP(uint64_t ap)
+{
+    if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
+        switch(ap) {
+            case 0: /*This case is weird it can also be VMKernelReadOnly*/
+                return VMKernelOnly;
+            case 1:
+                return VMReadOnly;
+            case 3:
+                return VMReadWrite;
+            default:
+                fail("Invalid AP");
+        }
+    } else {
+        switch(ap) {
+            case 0:
+                return VMKernelOnly;
+            case 1:
+                return VMReadWrite;
+            case 2:
+                return VMKernelReadOnly;
+            case 3:
+                return VMReadOnly;
+            default:
+                fail("Invalid AP");
+        }
+    }
+}
 
 vm_rights_t CONST maskVMRights(vm_rights_t vm_rights, seL4_CapRights_t cap_rights_mask)
 {
@@ -1729,7 +1729,7 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
 static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
     int num = 0;
-    // vm_rights_t vm_rights;
+    vm_rights_t vm_rights;
 
     for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
         /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
@@ -1738,8 +1738,8 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
         if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
             /* TODO: Check this more elegantly */
             if (rights.words[0] != 15) {
-                // vm_rights = maskVMRights(VMRightsfromAP(pte_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
-                // pte_ptr_set_AP(lu_ret_pt.ptSlot, APFromVMRights(vm_rights));
+                vm_rights = maskVMRights(VMRightsfromAP(pte_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
+                pte_ptr_set_AP(lu_ret_pt.ptSlot, APFromVMRights(vm_rights));
             } else {
                 *(lu_ret_pt.ptSlot) = pte_invalid_new();
             }
@@ -1761,8 +1761,8 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
             }
 
             if (rights.words[0] != 15) {
-                // vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
-                // pde_pde_large_ptr_set_AP(lu_ret_pd.pdSlot, APFromVMRights(vm_rights));
+                vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
+                pde_pde_large_ptr_set_AP(lu_ret_pd.pdSlot, APFromVMRights(vm_rights));
             } else {
                 *(lu_ret_pd.pdSlot) = pde_invalid_new();
             }
@@ -1788,8 +1788,8 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
             }
 
             if (rights.words[0] != 15) {
-                // vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
-                // pude_pude_1g_ptr_set_AP(lu_ret_pud.pudSlot, vm_rights);
+                vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
+                pude_pude_1g_ptr_set_AP(lu_ret_pud.pudSlot, vm_rights);
             } else {
                 *(lu_ret_pud.pudSlot) = pude_invalid_new();
             }
