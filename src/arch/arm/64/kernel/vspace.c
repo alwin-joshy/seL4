@@ -27,6 +27,7 @@
 #include <arch/object/vcpu.h>
 #include <arch/machine/tlb.h>
 #define RESERVED 3
+#define MAX_RANGE 32
 
 /*
  * Memory types are defined in Memory Attribute Indirection Register.
@@ -166,6 +167,35 @@ static word_t CONST APFromVMRights(vm_rights_t vm_rights)
         fail("Invalid VM rights");
     }
 }
+
+// static vm_rights_t CONST VMRightsfromAP(uint64_t ap)
+// {
+//     if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
+//         switch(ap) {
+//             case 0: /*This case is weird it can also be VMKernelReadOnly*/
+//                 return VMKernelOnly;
+//             case 1:
+//                 return VMReadOnly;
+//             case 3:
+//                 return VMReadWrite;
+//             default:
+//                 fail("Invalid AP");
+//         }
+//     } else {
+//         switch(ap) {
+//             case 0:
+//                 return VMKernelOnly;
+//             case 1:
+//                 return VMReadWrite;
+//             case 2:
+//                 return VMKernelReadOnly;
+//             case 3:
+//                 return VMReadOnly;
+//             default:
+//                 fail("Invalid AP");
+//         }
+//     }
+// }
 
 vm_rights_t CONST maskVMRights(vm_rights_t vm_rights, seL4_CapRights_t cap_rights_mask)
 {
@@ -1691,21 +1721,386 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
+// static void protect_page(uint64_t *word, vm_rights_t vm_rights) {
+//     *word = ((*word & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull))
+// }
+
+
+static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
+    vptr_t curr_vaddr = base_vaddr;
+    int num = 0;
+    // vm_rights_t vm_rights;
+
+    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+        /* Check pte at curr_vaddr to see if there is a small page mapped for this address*/
+        lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+        if (lu_ret_pt.status == EXCEPTION_NONE && pte_ptr_get_present(lu_ret_pt.ptSlot)) {
+            /* TODO: Check this more elegantly */
+            if (rights.words[0] != 15) {
+                // vm_rights = maskVMRights(VMRightsfromAP(pte_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
+                // pte_ptr_set_AP(lu_ret_pt.ptSlot, APFromVMRights(vm_rights));
+            } else {
+                *(lu_ret_pt.ptSlot) = pte_invalid_new();
+            }
+            cleanByVA_PoU((vptr_t)lu_ret_pt.ptSlot, pptr_to_paddr(lu_ret_pt.ptSlot));
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+            continue;
+        } 
+
+        /* Check pde for curr_vaddr*/
+        lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, curr_vaddr);
+
+        /* If a large page is mapped for this vaddr */
+        if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
+            /* If the end_vaddr is somewhere inside the large page*/
+            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
+                curr_vaddr = end_vaddr;
+                break; 
+            }
+
+            if (rights.words[0] != 15) {
+                // vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
+                // pde_pde_large_ptr_set_AP(lu_ret_pd.pdSlot, APFromVMRights(vm_rights));
+            } else {
+                *(lu_ret_pd.pdSlot) = pde_invalid_new();
+            }
+            cleanByVA_PoU((vptr_t) lu_ret_pd.pdSlot, pptr_to_paddr(lu_ret_pd.pdSlot));
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(ARMLargePage));
+            continue;
+            /* If there is a page table mapped for curr_vaddr move to the next pte */
+        } else if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_small_ptr_get_present(lu_ret_pd.pdSlot)) {
+            curr_vaddr += (1 << pageBitsForSize(ARMSmallPage));
+            continue;
+        }
+
+        /* Check pude for curr_vaddr*/
+        lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, curr_vaddr);
+
+        /* If a large page is mapped for this vaddr */
+        if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
+            /* If the end_vaddr is somewhere inside the huge page*/
+            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
+                curr_vaddr = end_vaddr;
+                break; 
+            }
+
+            if (rights.words[0] != 15) {
+                // vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
+                // pude_pude_1g_ptr_set_AP(lu_ret_pud.pudSlot, vm_rights);
+            } else {
+                *(lu_ret_pud.pudSlot) = pude_invalid_new();
+            }
+            cleanByVA_PoU((vptr_t) lu_ret_pud.pudSlot, pptr_to_paddr(lu_ret_pud.pudSlot));
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(ARMHugePage));
+            continue;
+            /* If there is a PD mapped for this vaddr range move to the next pde */
+        } else if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_pd_ptr_get_present(lu_ret_pud.pudSlot)) {
+            curr_vaddr += (1 << pageBitsForSize(ARMLargePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMLargePage)));
+            continue;
+        }
+
+        /* If there are no mappings for the PUD, then we should move to the next PUD and check that until we
+         * reach the end_vaddr */
+        curr_vaddr += (1 << pageBitsForSize(ARMHugePage)) - (curr_vaddr % (1 << pageBitsForSize(ARMHugePage)));
+    }
+
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
+
+    return num;
+}
+
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
 {
-    vptr_t start, end;
-    paddr_t pstart;
-    asid_t asid;
-    vspace_root_t *vspaceRoot;
-    lookupFrame_ret_t resolve_ret;
-    findVSpaceForASID_ret_t find_ret;
+
 
     switch (invLabel) {
+    case ARMVspaceRange_Protect: {
+        asid_t asid;
+        vspace_root_t *vspaceRoot;
+        vptr_t base_vaddr, end_vaddr;
+        findVSpaceForASID_ret_t find_ret;
+
+        if (length < 2) {
+            userError("Vspace: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        base_vaddr = getSyscallArg(0, buffer);
+        end_vaddr = getSyscallArg(1, buffer);
+        seL4_CapRights_t rights = rightsFromWord(getSyscallArg(2, buffer)); 
+
+
+        if (unlikely(!isValidNativeRoot(cap))) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the supplied pgd is ok */
+        vspaceRoot = cap_vtable_root_get_basePtr(cap);
+        asid = cap_vtable_root_get_mappedASID(cap);
+
+        find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpace: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpace: Invalid VSpace Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(base_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(base_vaddr, ARMHugePage))) {
+            userError("VSpace: Start vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
+            userError("VSpace: End vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (base_vaddr > end_vaddr) {
+            userError("VSpace: End of the range must be after the start of the range.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (end_vaddr > USER_TOP) {
+            userError("VSpace: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
+        /* TODO: Don't think AARCH64 supports a virtual address range TLB flush for given ASID. */
+        if (performVspaceInvocationProtect(vspaceRoot, base_vaddr, end_vaddr, rights)) {
+           invalidateTLBByASID(asid);
+        }
+
+        /* This makes the page mapping benchmarks much faster but there is no real way of knowing how it affects the
+         * system without macrobenchmarks. If they are choosing to do a range unmapping, they opt into the tlb flush. */
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
+    case ARMVspacePage_Map: {
+        vptr_t vaddr;
+        paddr_t base;
+        cte_t *frame_cte;
+        cap_t frameCap;
+        vspace_root_t *vspaceRoot;
+        vspace_root_t *frameRoot;
+        asid_t asid, frame_asid;
+        vm_rights_t vmRights;
+        vm_page_size_t frameSize;
+        vm_attributes_t attributes;
+        findVSpaceForASID_ret_t find_ret;
+
+        if (unlikely(length < 3 || current_extra_caps.excaprefs[0] == NULL)) {
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vaddr = getSyscallArg(0, buffer);
+        attributes = vmAttributesFromWord(getSyscallArg(2, buffer));
+        frame_cte = current_extra_caps.excaprefs[0];
+        frameCap = frame_cte->cap;
+
+        if (cap_get_capType(frameCap) != cap_frame_cap) {
+            userError("Vspace map: Capability must be a frame cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidArgumentNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        frameSize = cap_frame_cap_get_capFSize(frameCap);
+        vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(frameCap),
+                                rightsFromWord(getSyscallArg(1, buffer)));
+
+        if (unlikely(!isValidNativeRoot(cap))) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vspaceRoot = cap_vtable_root_get_basePtr(cap);
+        asid = cap_vtable_root_get_mappedASID(cap);
+
+        find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpace Map: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpace Map: Invalid VSpace Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(vaddr, frameSize))) {
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* In the case of remap, the cap should have a valid asid */
+        frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&frameCap);
+        frameRoot = vspaceRoot;
+
+        if (frame_asid != asidInvalid) {
+            if (frame_asid != asid) {
+                /* In the previous version, this would just fail. Now we get the vspaceroot for the asid it is in.
+                This allows us to reuse stale caps from other vspaces. */
+
+                find_ret = findVSpaceForASID(frame_asid);
+                if (likely(find_ret.status == EXCEPTION_NONE)) {
+                    frameRoot = find_ret.vspace_root;
+                } else {
+                    frame_asid = asidInvalid; 
+                }
+                
+            } 
+        } else {
+            if (unlikely(vaddr + BIT(pageBitsForSize(frameSize)) - 1 > USER_TOP)) {
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        base = pptr_to_paddr((void *)cap_frame_cap_get_capFBasePtr(frameCap));
+
+        if (frameSize == ARMSmallPage) {
+            lookupPTSlot_ret_t lu_ret;
+
+            // If the current address that is mapped by the frame is not the desired address
+            if (frame_asid != asidInvalid && cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lu_ret = lookupPTSlot(frameRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
+
+                /* This failing just means that the page table structures required for the old mapping are no longer present, meaning that the 
+                frame cannot currently be backing a page */
+                if (likely(lu_ret.status == EXCEPTION_NONE)) { 
+                    /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */       
+                    if (pte_ptr_get_page_base_address(lu_ret.ptSlot) == base) {
+                        userError("Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1; 
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            frameCap = cap_frame_cap_set_capFMappedASID(frameCap, asid);
+            frameCap = cap_frame_cap_set_capFMappedAddress(frameCap, vaddr);
+
+
+            lu_ret = lookupPTSlot(vspaceRoot, vaddr);
+            if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performSmallPageInvocationMap(asid, frameCap, frame_cte,
+                                                 makeUser3rdLevel(base, vmRights, attributes), lu_ret.ptSlot);
+
+        } else if (frameSize == ARMLargePage) {
+            lookupPDSlot_ret_t lu_ret; 
+
+            if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lu_ret = lookupPDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
+
+                if (likely(lu_ret.status == EXCEPTION_NONE)) {
+                    /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */     
+                    if (pde_pde_large_ptr_get_page_base_address(lu_ret.pdSlot) == base) {
+                        userError("Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1; 
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            frameCap = cap_frame_cap_set_capFMappedASID(frameCap, asid);
+            frameCap = cap_frame_cap_set_capFMappedAddress(frameCap, vaddr);
+
+            lu_ret = lookupPDSlot(vspaceRoot, vaddr);
+
+            if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performLargePageInvocationMap(asid, frameCap, frame_cte,
+                                                 makeUser2ndLevel(base, vmRights, attributes), lu_ret.pdSlot);
+
+        } else {
+            lookupPUDSlot_ret_t lu_ret;
+
+            if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+
+                lu_ret = lookupPUDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
+
+                if (likely(lu_ret.status == EXCEPTION_NONE)) {
+                    /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */     
+                    if (pude_pude_1g_ptr_get_page_base_address(lu_ret.pudSlot) == base) {
+                        userError("Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1; 
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            lu_ret = lookupPUDSlot(vspaceRoot, vaddr);
+
+            if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performHugePageInvocationMap(asid, frameCap, frame_cte,
+                                                makeUser1stLevel(base, vmRights, attributes), lu_ret.pudSlot);
+        }
+
+    }
     case ARMVSpaceClean_Data:
     case ARMVSpaceInvalidate_Data:
     case ARMVSpaceCleanInvalidate_Data:
-    case ARMVSpaceUnify_Instruction:
+    case ARMVSpaceUnify_Instruction: {
+        vptr_t start, end;
+        paddr_t pstart;
+        asid_t asid;
+        vspace_root_t *vspaceRoot;
+        lookupFrame_ret_t resolve_ret;
+        findVSpaceForASID_ret_t find_ret;
 
         if (length < 2) {
             userError("VSpaceRoot Flush: Truncated message.");
@@ -1781,7 +2176,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return performVSpaceFlush(invLabel, vspaceRoot, asid, start, end - 1, pstart);
-
+    }
     default:
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
