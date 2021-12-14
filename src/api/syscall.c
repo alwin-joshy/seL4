@@ -239,10 +239,9 @@ exception_t handleUnknownSyscall(word_t w)
             setRegister(NODE_STATE(ksCurThread), capRegister, seL4_IllegalOperation);
             return EXCEPTION_SYSCALL_ERROR;
         }
-
+#endif /* CONFIG_KERNEL_LOG_BUFFER */
         setRegister(NODE_STATE(ksCurThread), capRegister, seL4_NoError);
         return EXCEPTION_NONE;
-#endif /* CONFIG_KERNEL_LOG_BUFFER */
     }
 
 #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
@@ -490,7 +489,7 @@ static void handleReply(void)
     }
 
     case cap_null_cap:
-        userError("Attempted reply operation when no reply cap present.");
+        /* Do nothing when no caller is pending */
         return;
 
     default:
@@ -583,7 +582,7 @@ static inline void mcsPreemptionPoint(irq_t irq)
         checkBudget();
     } else if (NODE_STATE(ksCurSC)->scRefillMax) {
         /* otherwise, if the thread is not schedulable, the SC could be valid - charge it if so */
-        chargeBudget(NODE_STATE(ksConsumed), false, CURRENT_CPU_INDEX(), true);
+        chargeBudget(NODE_STATE(ksConsumed), false);
     } else {
         /* If the current SC is no longer configured the time can no
          * longer be charged to it. Simply dropping the consumed time
@@ -603,7 +602,7 @@ static void handleYield(void)
 #ifdef CONFIG_KERNEL_MCS
     /* Yield the current remaining budget */
     ticks_t consumed = NODE_STATE(ksCurSC)->scConsumed + NODE_STATE(ksConsumed);
-    chargeBudget(refill_head(NODE_STATE(ksCurSC))->rAmount, false, CURRENT_CPU_INDEX(), true);
+    chargeBudget(refill_head(NODE_STATE(ksCurSC))->rAmount, false);
     /* Manually updated the scConsumed so that the full timeslice isn't added, just what was consumed */
     NODE_STATE(ksCurSC)->scConsumed = consumed;
 #else
