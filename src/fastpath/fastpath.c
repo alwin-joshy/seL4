@@ -784,9 +784,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
             case (seL4_Fault_Timeout):
                 break;
 #endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
             case (seL4_Fault_DebugException):
                 break;
-
+#endif
             default:
                 restart = 1;
                 break;
@@ -832,4 +834,4 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 #endif
-}
+}    
