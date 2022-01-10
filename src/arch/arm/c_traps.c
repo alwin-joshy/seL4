@@ -62,7 +62,19 @@ void VISIBLE NORETURN c_handle_enfp(void)
 }
 #endif /* CONFIG_HAVE_FPU */
 
-static inline void NORETURN c_handle_vm_fault(vm_fault_type_t type)
+void NORETURN vm_fault_slowpath(vm_fault_type_t type)
+{
+#ifdef TRACK_KERNEL_ENTRIES
+ksKernelEntry.is_fastpath = 0;
+#endif
+handleVMFaultEvent(type);
+
+restore_user_context();
+UNREACHABLE();
+}
+
+
+void VISIBLE NORETURN c_handle_data_fault(void)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
@@ -72,19 +84,32 @@ static inline void NORETURN c_handle_vm_fault(vm_fault_type_t type)
     ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
 #endif
 
-    handleVMFaultEvent(type);
-    restore_user_context();
+#ifdef CONFIG_EXCEPTION_FASTPATH
+    fastpath_vm_fault(seL4_DataFault);
     UNREACHABLE();
-}
-
-void VISIBLE NORETURN c_handle_data_fault(void)
-{
-    c_handle_vm_fault(seL4_DataFault);
+#else
+    vm_fault_slowpath(seL4_DataFault);
+    UNREACHABLE();
+#endif
 }
 
 void VISIBLE NORETURN c_handle_instruction_fault(void)
 {
-    c_handle_vm_fault(seL4_InstructionFault);
+    NODE_LOCK_SYS;
+    c_entry_hook();
+
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.path = Entry_VMFault;
+    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+#endif
+
+#ifdef CONFIG_EXCEPTION_FASTPATH
+    fastpath_vm_fault(seL4_InstructionFault);
+    UNREACHABLE();
+#else
+    vm_fault_slowpath(seL4_InstructionFault);
+    UNREACHABLE();
+#endif
 }
 
 void VISIBLE NORETURN c_handle_interrupt(void)
@@ -104,54 +129,54 @@ void VISIBLE NORETURN c_handle_interrupt(void)
 
 void NORETURN slowpath(syscall_t syscall)
 {
-    if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
+if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
 #ifdef TRACK_KERNEL_ENTRIES
-        ksKernelEntry.path = Entry_UnknownSyscall;
+ksKernelEntry.path = Entry_UnknownSyscall;
         /* ksKernelEntry.word word is already set to syscall */
 #endif /* TRACK_KERNEL_ENTRIES */
-        /* Contrary to the name, this handles all non-standard syscalls used in
-         * debug builds also.
-         */
-        handleUnknownSyscall(syscall);
-    } else {
+/* Contrary to the name, this handles all non-standard syscalls used in
+ * debug builds also.
+ */
+handleUnknownSyscall(syscall);
+} else {
 #ifdef TRACK_KERNEL_ENTRIES
-        ksKernelEntry.is_fastpath = 0;
+ksKernelEntry.is_fastpath = 0;
 #endif /* TRACK KERNEL ENTRIES */
-        handleSyscall(syscall);
-    }
+handleSyscall(syscall);
+}
 
-    restore_user_context();
-    UNREACHABLE();
+restore_user_context();
+UNREACHABLE();
 }
 
 void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
-    NODE_LOCK_SYS;
+NODE_LOCK_SYS;
 
-    c_entry_hook();
+c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
-    benchmark_debug_syscall_start(cptr, msgInfo, syscall);
+benchmark_debug_syscall_start(cptr, msgInfo, syscall);
     ksKernelEntry.is_fastpath = 0;
 #endif /* DEBUG */
 
-    slowpath(syscall);
-    UNREACHABLE();
+slowpath(syscall);
+UNREACHABLE();
 }
 
 #ifdef CONFIG_FASTPATH
 ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 {
-    NODE_LOCK_SYS;
+NODE_LOCK_SYS;
 
-    c_entry_hook();
+c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
-    benchmark_debug_syscall_start(cptr, msgInfo, SysCall);
+benchmark_debug_syscall_start(cptr, msgInfo, SysCall);
     ksKernelEntry.is_fastpath = 1;
 #endif /* DEBUG */
 
-    fastpath_call(cptr, msgInfo);
-    UNREACHABLE();
+fastpath_call(cptr, msgInfo);
+UNREACHABLE();
 }
 
 ALIGN(L1_CACHE_LINE_SIZE)
@@ -161,20 +186,20 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo, word_t re
 void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 {
-    NODE_LOCK_SYS;
+NODE_LOCK_SYS;
 
-    c_entry_hook();
+c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
-    benchmark_debug_syscall_start(cptr, msgInfo, SysReplyRecv);
+benchmark_debug_syscall_start(cptr, msgInfo, SysReplyRecv);
     ksKernelEntry.is_fastpath = 1;
 #endif /* DEBUG */
 
 #ifdef CONFIG_KERNEL_MCS
-    fastpath_reply_recv(cptr, msgInfo, reply);
+fastpath_reply_recv(cptr, msgInfo, reply);
 #else
-    fastpath_reply_recv(cptr, msgInfo);
+fastpath_reply_recv(cptr, msgInfo);
 #endif
-    UNREACHABLE();
+UNREACHABLE();
 }
 
 #endif
@@ -194,4 +219,4 @@ VISIBLE NORETURN void c_handle_vcpu_fault(word_t hsr)
     restore_user_context();
     UNREACHABLE();
 }
-#endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */
+#endif // CONFIG_ARM_HYPERVISOR_SUPPORT
