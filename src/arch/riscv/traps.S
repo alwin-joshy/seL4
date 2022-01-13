@@ -122,6 +122,13 @@ handle_syscall:
   beq a7, t3, c_handle_fastpath_reply_recv
 #endif
 
+#ifdef CONFIG_SIGNAL_FASTPATH
+#ifdef CONFIG_MCS
+    li t3, SYSCALL_SEND
+    beq a7, t3, c_handle_fastpath_signal
+#endif
+#endif
+
   /* move syscall number to 3rd argument */
   mv a2, a7
 
