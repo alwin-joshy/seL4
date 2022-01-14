@@ -35,7 +35,7 @@ static inline void ntfn_ptr_set_queue(notification_t *ntfnPtr, tcb_queue_t ntfn_
 #ifdef CONFIG_KERNEL_MCS
 #define MCS_DO_IF_SC(tcb, ntfnPtr, _block) \
     maybeDonateSchedContext(tcb, ntfnPtr); \
-    if (isSchedulable(tcb)) { \
+    if (isSchedulable(tcb)) {              \
         _block \
     }
 #else

@@ -53,7 +53,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
     /* Get the notification badge */
     word_t badge = cap_notification_cap_get_capNtfnBadge(cap);
-
     switch (ntfnState) {
         case NtfnState_Active: {
             word_t badge2 = notification_ptr_get_ntfnMsgIdentifier(ntfnPtr);
@@ -67,10 +66,14 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             if (tcb) {
                 if (thread_state_ptr_get_tsType(&tcb->tcbState) == ThreadState_BlockedOnReceive) {
                     /* Send and start thread running */
-                    cancelIPC_fp(tcb);
                     maybeDonateSchedContext(tcb, ntfnPtr);
 
-                    /* Get destination thread VTable */
+                    /* We can't just resume the current thread as the default behaviour would be to invoke the scheduler */
+                    if (!tcb->tcbSchedContext) {
+                        slowpath(SysSend);
+                    }
+
+/* Get destination thread VTable */
                     newVTable = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
 
                     /* Ensure that the destination has a valid VTable. */
@@ -133,21 +136,39 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
 #endif
-
+                    cancelIPC_fp(tcb);
                     thread_state_ptr_set_tsType_np(&tcb->tcbState, ThreadState_Running);
                     setRegister(tcb, badgeRegister, badge);
+
                     if (NODE_STATE(ksCurThread)->tcbPriority < tcb->tcbPriority) {
+                        userError("here");
                         /* switch to waiter immediately */
                         SCHED_ENQUEUE_CURRENT_TCB;
                         switchToThread_fp(tcb, cap_pd, stored_hw_asid);
+
+                        if (sc_constant_bandwidth(NODE_STATE(ksCurThread)->tcbSchedContext)) {
+                            refill_unblock_check(NODE_STATE(ksCurThread)->tcbSchedContext);
+                        }
+
+                        assert(refill_ready(NODE_STATE(ksCurThread)->tcbSchedContext));
+                        assert(refill_sufficient(NODE_STATE(ksCurThread)->tcbSchedContext, 0));
+                        commitTime();
+
                         NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
+                        setNextInterrupt();
                     } else {
                         /* continue executing signaller */
                         SCHED_ENQUEUE(tcb);
                     }
                     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
                     UNREACHABLE();
-                } else {
+                }
+#ifdef CONFIG_VTX
+                else if (thread_state_ptr_get_tsType(&tcb->tcbState) == ThreadState_RunningVM) {
+                    // TODO
+                }
+#endif
+                else {
                     /* In particular, this path is taken when a thread
                      * is waiting on a reply cap since BlockedOnReply
                      * would also trigger this path. I.e, a thread
@@ -187,7 +208,12 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
             maybeDonateSchedContext(dest, ntfnPtr);
 
-            /* Get destination thread VTable */
+            /* We can't just resume the current thread as the default behaviour would be to invoke the scheduler */
+            if (!dest->tcbSchedContext) {
+                slowpath(SysSend);
+            }
+
+/* Get destination thread VTable */
             newVTable = TCB_PTR_CTE_PTR(dest, tcbVTable)->cap;
 
             /* Ensure that the destination has a valid VTable. */
@@ -257,7 +283,17 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             /* switch to waiter immediately */
             SCHED_ENQUEUE_CURRENT_TCB;
             switchToThread_fp(dest, cap_pd, stored_hw_asid);
+
+            if (sc_constant_bandwidth(NODE_STATE(ksCurThread)->tcbSchedContext)) {
+                refill_unblock_check(NODE_STATE(ksCurThread)->tcbSchedContext);
+            }
+
+            assert(refill_ready(NODE_STATE(ksCurThread)->tcbSchedContext));
+            assert(refill_sufficient(NODE_STATE(ksCurThread)->tcbSchedContext, 0));
+            commitTime();
+
             NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
+            setNextInterrupt();
         } else {
             /* continue executing signaller */
             SCHED_ENQUEUE(dest);
