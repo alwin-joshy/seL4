@@ -20,7 +20,8 @@
 static inline
 FORCE_INLINE
 #endif
-void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
+void NORETURN fastpath_vm_fault(vm_fault_type_t type)
+{
     cap_t handler_cap;
     endpoint_t *ep_ptr;
     tcb_t *dest;
@@ -41,7 +42,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 #endif
 
     if (unlikely(!cap_capType_equals(handler_cap, cap_endpoint_cap) ||
-    !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
+        !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
         vm_fault_slowpath(type);
     }
 
@@ -52,25 +53,25 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     * if the endpoint is valid. */
     dest = TCB_PTR(endpoint_ptr_get_epQueue_head(ep_ptr));
 
-/* Check that there's a thread waiting to receive */
+    /* Check that there's a thread waiting to receive */
     if (unlikely(endpoint_ptr_get_state(ep_ptr) != EPState_Recv)) {
         vm_fault_slowpath(type);
     }
 
-/* ensure we are not single stepping the destination in ia32 */
+    /* ensure we are not single stepping the destination in ia32 */
 #if defined(CONFIG_HARDWARE_DEBUG_API) && defined(CONFIG_ARCH_IA32)
     if (unlikely(dest->tcbArch.tcbContext.breakpointState.single_step_enabled)) {
         vm_fault_slowpath(type);
     }
 #endif
 
-/* Get destination thread.*/
+    /* Get destination thread.*/
     newVTable = TCB_PTR_CTE_PTR(dest, tcbVTable)->cap;
 
-/* Get vspace root. */
+    /* Get vspace root. */
     cap_pd = cap_vtable_cap_get_vspace_root_fp(newVTable);
 
-/* Ensure that the destination has a valid VTable. */
+    /* Ensure that the destination has a valid VTable. */
     if (unlikely(! isValidVTableRoot_fp(newVTable))) {
         vm_fault_slowpath(type);
     }
@@ -104,15 +105,15 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     dom = maxDom ? ksCurDomain : 0;
     /* ensure only the idle thread or lower prio threads are present in the scheduler */
     if (unlikely(dest->tcbPriority < NODE_STATE(ksCurThread->tcbPriority) &&
-    !isHighestPrio(dom, dest->tcbPriority))) {
+                 !isHighestPrio(dom, dest->tcbPriority))) {
 
         vm_fault_slowpath(type);
     }
 
-/* Ensure that the endpoint has has grant or grant-reply rights so that we can
-* create the reply cap */
+    /* Ensure that the endpoint has has grant or grant-reply rights so that we can
+    * create the reply cap */
     if (unlikely(!cap_endpoint_cap_get_capCanGrant(handler_cap) &&
-    !cap_endpoint_cap_get_capCanGrantReply(handler_cap))) {
+                 !cap_endpoint_cap_get_capCanGrantReply(handler_cap))) {
         vm_fault_slowpath(type);
     }
 
@@ -194,45 +195,43 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 
     /* Insert reply cap */
     word_t replyCanGrant = thread_state_ptr_get_blockingIPCCanGrant(&dest->tcbState);;
-    cap_reply_cap_ptr_new_np(&callerSlot->cap, replyCanGrant, 0,
-    TCB_REF(NODE_STATE(ksCurThread)));
+    cap_reply_cap_ptr_new_np(&callerSlot->cap, replyCanGrant, 0, TCB_REF(NODE_STATE(ksCurThread)));
     mdb_node_ptr_set_mdbPrev_np(&callerSlot->cteMDBNode, CTE_REF(replySlot));
-    mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
-    &replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
+    mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(&replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
 #endif
 
 #ifdef CONFIG_ARCH_AARCH64
     switch (type) {
-        case ARMDataAbort: {
-            word_t addr, fault;
+    case ARMDataAbort: {
+        word_t addr, fault;
 
-            addr = getFAR();
-            fault = getDFSR();
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            /* use the IPA */
-            if (ARCH_NODE_STATE(armHSVCPUActive)) {
-                addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
-            }
-#endif
-            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-            break;
-        }
-
-        case ARMPrefetchAbort: {
-            word_t pc, fault;
-
-            pc = getRestartPC(NODE_STATE(ksCurThread));
-            fault = getIFSR();
+        addr = getFAR();
+        fault = getDFSR();
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            if (ARCH_NODE_STATE(armHSVCPUActive)) {
-                pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
-            }
-#endif
-            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
-            break;
+        /* use the IPA */
+        if (ARCH_NODE_STATE(armHSVCPUActive)) {
+            addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
         }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+
+    case ARMPrefetchAbort: {
+        word_t pc, fault;
+
+        pc = getRestartPC(NODE_STATE(ksCurThread));
+        fault = getIFSR();
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        if (ARCH_NODE_STATE(armHSVCPUActive)) {
+            pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
+        }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
+        break;
+    }
     }
 #endif
 
@@ -244,14 +243,14 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
     fault = getRegister(NODE_STATE(ksCurThread), Error);
 
     switch (type) {
-        case X86DataFault: {
-            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-            break;
-        }
-        case X86InstructionFault: {
-            NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
-            break;
-        }
+    case X86DataFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+    case X86InstructionFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
+        break;
+    }
     }
 #endif
 
@@ -284,8 +283,10 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type) {
 #else
     setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread)));
 #endif
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr, seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault, seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr,
+                seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
+    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault,
+                seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
     setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
 
     info = seL4_MessageInfo_new(seL4_Fault_VMFault, 0, 0, seL4_VMFault_Length);
@@ -799,29 +800,29 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         bool_t restart = 0;
         switch (fault_type) {
-            case (seL4_Fault_CapFault): {
-                break;
-            }
-            case (seL4_Fault_UnknownSyscall): {
-                break;
-            }
-            case (seL4_Fault_UserException): {
-                break;
-            }
+        case (seL4_Fault_CapFault): {
+            break;
+        }
+        case (seL4_Fault_UnknownSyscall): {
+            break;
+        }
+        case (seL4_Fault_UserException): {
+            break;
+        }
 #ifdef CONFIG_KERNEL_MCS
-            case (seL4_Fault_Timeout): {
-                break;
-            }
+        case (seL4_Fault_Timeout): {
+            break;
+        }
 #endif
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
-            case (seL4_Fault_DebugException): {
-                break;
-            }
+        case (seL4_Fault_DebugException): {
+            break;
+        }
 #endif
-            default: {
-                restart = 1;
-            }
+        default: {
+            restart = 1;
+        }
         }
 
         /* TODO: This works here right now because vm faults always restart - the alternative is that the thread becomes inactive,
@@ -844,14 +845,13 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         /* The badge/msginfo do not need to be not sent - this is not necessary for exceptions */
         restore_user_context();
     } else {
-            /* Replies don't have a badge. */
+        /* Replies don't have a badge. */
         badge = 0;
 
         fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
 
         /* Dest thread is set Running, but not queued. */
-        thread_state_ptr_set_tsType_np(&caller->tcbState,
-        ThreadState_Running);
+        thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
         switchToThread_fp(caller, cap_pd, stored_hw_asid);
 
         msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));

@@ -26,7 +26,8 @@ void VISIBLE c_nested_interrupt(int irq)
     ARCH_NODE_STATE(x86KSPendingInterrupt) = irq;
 }
 
-void VISIBLE NORETURN vm_fault_slowpath(vm_fault_type_t type) {
+void VISIBLE NORETURN vm_fault_slowpath(vm_fault_type_t type)
+{
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = 0;
 #endif
