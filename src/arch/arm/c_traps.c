@@ -133,7 +133,6 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
     benchmark_debug_syscall_start(cptr, msgInfo, syscall);
     ksKernelEntry.is_fastpath = 0;
 #endif /* DEBUG */
-
     slowpath(syscall);
     UNREACHABLE();
 }
@@ -166,7 +165,7 @@ void VISIBLE c_handle_fastpath_signal(word_t cptr, word_t msgInfo)
     benchmark_debug_syscall_start(cptr, msgInfo, SysCall);
     ksKernelEntry.is_fastpath = 1;
 #endif /* DEBUG */
-
+//    slowpath(SysSend);
     fastpath_signal(cptr, msgInfo);
     UNREACHABLE();
 }
