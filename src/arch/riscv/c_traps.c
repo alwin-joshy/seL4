@@ -141,7 +141,7 @@ void VISIBLE NORETURN c_handle_exception(void)
             vm_fault_slowpath(scause);
             UNREACHABLE();
 #endif
-            break; 
+            break;
         default:
 #ifdef CONFIG_HAVE_FPU
             if (!isFpuEnable()) {
