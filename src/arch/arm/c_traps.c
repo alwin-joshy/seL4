@@ -130,7 +130,7 @@ void VISIBLE NORETURN c_handle_interrupt(void)
 void NORETURN slowpath(syscall_t syscall)
 {
     if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
-#ifdef TRACK_KERNEL_ENTRIES \
+#ifdef TRACK_KERNEL_ENTRIES
         ksKernelEntry.path = Entry_UnknownSyscall;
         /* ksKernelEntry.word word is already set to syscall */
 #endif /* TRACK_KERNEL_ENTRIES */
