@@ -120,6 +120,7 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
 
 void NORETURN slowpath(syscall_t syscall)
 {
+
 #ifdef CONFIG_VTX
     if (syscall == SysVMEnter && NODE_STATE(ksCurThread)->tcbArch.tcbVCPU) {
         vcpu_update_state_sysvmenter(NODE_STATE(ksCurThread)->tcbArch.tcbVCPU);
