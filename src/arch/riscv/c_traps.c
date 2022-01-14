@@ -146,7 +146,7 @@ void VISIBLE NORETURN c_handle_exception(void)
     default:
 #ifdef CONFIG_HAVE_FPU
         if (!isFpuEnable()) {
-        /* we assume the illegal instruction is caused by FPU first */
+            /* we assume the illegal instruction is caused by FPU first */
             handleFPUFault();
             setNextPC(NODE_STATE(ksCurThread), getRestartPC(NODE_STATE(ksCurThread)));
             break;
