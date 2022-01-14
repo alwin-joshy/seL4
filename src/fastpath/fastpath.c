@@ -42,7 +42,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
 #endif
 
     if (unlikely(!cap_capType_equals(handler_cap, cap_endpoint_cap) ||
-        !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
+                 !cap_endpoint_cap_get_capCanReceive(handler_cap))) {
         vm_fault_slowpath(type);
     }
 
