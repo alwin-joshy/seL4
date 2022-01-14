@@ -62,7 +62,7 @@ void VISIBLE NORETURN c_handle_enfp(void)
 }
 #endif /* CONFIG_HAVE_FPU */
 
-void NORETURN vm_fault_slowpath(vm_fault_type_t type)
+static inline void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 {
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = 0;
@@ -152,8 +152,8 @@ void NORETURN slowpath(syscall_t syscall)
 void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
     NODE_LOCK_SYS;
-    c_entry_hook();
 
+    c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, syscall);
     ksKernelEntry.is_fastpath = 0;
@@ -168,8 +168,8 @@ ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 {
     NODE_LOCK_SYS;
-    c_entry_hook();
 
+    c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, SysCall);
     ksKernelEntry.is_fastpath = 1;
@@ -187,8 +187,8 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 {
     NODE_LOCK_SYS;
-    c_entry_hook();
 
+    c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, SysReplyRecv);
     ksKernelEntry.is_fastpath = 1;
@@ -219,4 +219,4 @@ VISIBLE NORETURN void c_handle_vcpu_fault(word_t hsr)
     restore_user_context();
     UNREACHABLE();
 }
-#endif // CONFIG_ARM_HYPERVISOR_SUPPORT
+#endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */

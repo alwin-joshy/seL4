@@ -796,7 +796,6 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 
 #ifdef CONFIG_EXCEPTION_FASTPATH
-
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         bool_t restart = 0;
         switch (fault_type) {
@@ -845,6 +844,8 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         /* The badge/msginfo do not need to be not sent - this is not necessary for exceptions */
         restore_user_context();
     } else {
+        /* I know there's no fault, so straight to the transfer. */
+
         /* Replies don't have a badge. */
         badge = 0;
 
@@ -859,13 +860,16 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
     }
 #else
+    /* I know there's no fault, so straight to the transfer. */
+
     /* Replies don't have a badge. */
     badge = 0;
 
     fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
 
     /* Dest thread is set Running, but not queued. */
-    thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
+    thread_state_ptr_set_tsType_np(&caller->tcbState,
+                                   ThreadState_Running);
     switchToThread_fp(caller, cap_pd, stored_hw_asid);
 
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
