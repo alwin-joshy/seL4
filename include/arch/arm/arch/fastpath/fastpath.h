@@ -20,7 +20,7 @@ NORETURN;
 
 
 void vm_fault_slowpath(vm_fault_type_t type)
-        NORETURN;
+NORETURN;
 
 static inline
 void fastpath_vm_fault(vm_fault_type_t type)
