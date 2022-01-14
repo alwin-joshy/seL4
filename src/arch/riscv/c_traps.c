@@ -39,62 +39,62 @@ void VISIBLE NORETURN restore_user_context(void)
 #endif
 
     asm volatile(
-    "mv t0, %[cur_thread]       \n"
-    LOAD_S " ra, (0*%[REGSIZE])(t0)  \n"
-    LOAD_S "  sp, (1*%[REGSIZE])(t0)  \n"
-    LOAD_S "  gp, (2*%[REGSIZE])(t0)  \n"
+        "mv t0, %[cur_thread]       \n"
+        LOAD_S " ra, (0*%[REGSIZE])(t0)  \n"
+        LOAD_S "  sp, (1*%[REGSIZE])(t0)  \n"
+        LOAD_S "  gp, (2*%[REGSIZE])(t0)  \n"
            /* skip tp */
            /* skip x5/t0 */
            /* no-op store conditional to clear monitor state */
            /* this may succeed in implementations with very large reservations, but the saved ra is dead */
            "sc.w zero, zero, (t0)\n"
-    LOAD_S "  t2, (6*%[REGSIZE])(t0)  \n"
-    LOAD_S "  s0, (7*%[REGSIZE])(t0)  \n"
-    LOAD_S "  s1, (8*%[REGSIZE])(t0)  \n"
-    LOAD_S "  a0, (9*%[REGSIZE])(t0) \n"
-    LOAD_S "  a1, (10*%[REGSIZE])(t0) \n"
-    LOAD_S "  a2, (11*%[REGSIZE])(t0) \n"
-    LOAD_S "  a3, (12*%[REGSIZE])(t0) \n"
-    LOAD_S "  a4, (13*%[REGSIZE])(t0) \n"
-    LOAD_S "  a5, (14*%[REGSIZE])(t0) \n"
-    LOAD_S "  a6, (15*%[REGSIZE])(t0) \n"
-    LOAD_S "  a7, (16*%[REGSIZE])(t0) \n"
-    LOAD_S "  s2, (17*%[REGSIZE])(t0) \n"
-    LOAD_S "  s3, (18*%[REGSIZE])(t0) \n"
-    LOAD_S "  s4, (19*%[REGSIZE])(t0) \n"
-    LOAD_S "  s5, (20*%[REGSIZE])(t0) \n"
-    LOAD_S "  s6, (21*%[REGSIZE])(t0) \n"
-    LOAD_S "  s7, (22*%[REGSIZE])(t0) \n"
-    LOAD_S "  s8, (23*%[REGSIZE])(t0) \n"
-    LOAD_S "  s9, (24*%[REGSIZE])(t0) \n"
-    LOAD_S "  s10, (25*%[REGSIZE])(t0)\n"
-    LOAD_S "  s11, (26*%[REGSIZE])(t0)\n"
-    LOAD_S "  t3, (27*%[REGSIZE])(t0) \n"
-    LOAD_S "  t4, (28*%[REGSIZE])(t0) \n"
-    LOAD_S "  t5, (29*%[REGSIZE])(t0) \n"
-    LOAD_S "  t6, (30*%[REGSIZE])(t0) \n"
-    /* Get next restored tp */
-    LOAD_S "  t1, (3*%[REGSIZE])(t0)  \n"
+        LOAD_S "  t2, (6*%[REGSIZE])(t0)  \n"
+        LOAD_S "  s0, (7*%[REGSIZE])(t0)  \n"
+        LOAD_S "  s1, (8*%[REGSIZE])(t0)  \n"
+        LOAD_S "  a0, (9*%[REGSIZE])(t0) \n"
+        LOAD_S "  a1, (10*%[REGSIZE])(t0) \n"
+        LOAD_S "  a2, (11*%[REGSIZE])(t0) \n"
+        LOAD_S "  a3, (12*%[REGSIZE])(t0) \n"
+        LOAD_S "  a4, (13*%[REGSIZE])(t0) \n"
+        LOAD_S "  a5, (14*%[REGSIZE])(t0) \n"
+        LOAD_S "  a6, (15*%[REGSIZE])(t0) \n"
+        LOAD_S "  a7, (16*%[REGSIZE])(t0) \n"
+        LOAD_S "  s2, (17*%[REGSIZE])(t0) \n"
+        LOAD_S "  s3, (18*%[REGSIZE])(t0) \n"
+        LOAD_S "  s4, (19*%[REGSIZE])(t0) \n"
+        LOAD_S "  s5, (20*%[REGSIZE])(t0) \n"
+        LOAD_S "  s6, (21*%[REGSIZE])(t0) \n"
+        LOAD_S "  s7, (22*%[REGSIZE])(t0) \n"
+        LOAD_S "  s8, (23*%[REGSIZE])(t0) \n"
+        LOAD_S "  s9, (24*%[REGSIZE])(t0) \n"
+        LOAD_S "  s10, (25*%[REGSIZE])(t0)\n"
+        LOAD_S "  s11, (26*%[REGSIZE])(t0)\n"
+        LOAD_S "  t3, (27*%[REGSIZE])(t0) \n"
+        LOAD_S "  t4, (28*%[REGSIZE])(t0) \n"
+        LOAD_S "  t5, (29*%[REGSIZE])(t0) \n"
+        LOAD_S "  t6, (30*%[REGSIZE])(t0) \n"
+        /* Get next restored tp */
+        LOAD_S "  t1, (3*%[REGSIZE])(t0)  \n"
            /* get restored tp */
            "add tp, t1, x0  \n"
-    /* get sepc */
-    LOAD_S "  t1, (34*%[REGSIZE])(t0)\n"
+        /* get sepc */
+        LOAD_S "  t1, (34*%[REGSIZE])(t0)\n"
            "csrw sepc, t1  \n"
-           #ifndef ENABLE_SMP_SUPPORT
+#ifndef ENABLE_SMP_SUPPORT
            /* Write back sscratch with cur_thread_reg to get it back on the next trap entry */
            "csrw sscratch, t0         \n"
 #endif
-    LOAD_S "  t1, (32*%[REGSIZE])(t0) \n"
+        LOAD_S "  t1, (32*%[REGSIZE])(t0) \n"
            "csrw sstatus, t1\n"
 
-    LOAD_S "  t1, (5*%[REGSIZE])(t0) \n"
-    LOAD_S "  t0, (4*%[REGSIZE])(t0) \n"
+        LOAD_S "  t1, (5*%[REGSIZE])(t0) \n"
+        LOAD_S "  t0, (4*%[REGSIZE])(t0) \n"
            "sret"
-    : /* no output */
-    : [REGSIZE] "i"(sizeof(word_t)),
-    [cur_thread] "r"(cur_thread_reg)
-    : "memory"
-    );
+        : /* no output */
+        : [REGSIZE] "i"(sizeof(word_t)),
+        [cur_thread] "r"(cur_thread_reg)
+        : "memory"
+        );
 
     UNREACHABLE();
 }
@@ -145,10 +145,10 @@ void VISIBLE NORETURN c_handle_exception(void)
 #ifdef CONFIG_HAVE_FPU
             if (!isFpuEnable()) {
             /* we assume the illegal instruction is caused by FPU first */
-            handleFPUFault();
-            setNextPC(NODE_STATE(ksCurThread), getRestartPC(NODE_STATE(ksCurThread)));
-            break;
-        }
+                handleFPUFault();
+                setNextPC(NODE_STATE(ksCurThread), getRestartPC(NODE_STATE(ksCurThread)));
+                break;
+            }
 #endif
             handleUserLevelFault(scause, 0);
             break;
