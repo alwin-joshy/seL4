@@ -44,7 +44,7 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
         x86_enable_ibrs();
     }
 
-    /* Only grab the lock if we are not handeling 'int_remote_call_ipi' interrupt
+    /* Only grab the lock if we are not handling 'int_remote_call_ipi' interrupt
      * also flag this lock as IRQ lock if handling the irq interrupts. */
     NODE_LOCK_IF(irq != int_remote_call_ipi,
                  irq >= int_irq_min && irq <= int_irq_max);
@@ -74,7 +74,7 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
 #endif
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
-        } else if (irq == int_debug || irq == int_software_break_request) {
+    } else if (irq == int_debug || irq == int_software_break_request) {
         /* Debug exception */
 #ifdef TRACK_KERNEL_ENTRIES
         ksKernelEntry.path = Entry_DebugFault;
@@ -119,9 +119,8 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
 
 void NORETURN slowpath(syscall_t syscall)
 {
-
 #ifdef CONFIG_VTX
-if (syscall == SysVMEnter && NODE_STATE(ksCurThread)->tcbArch.tcbVCPU) {
+    if (syscall == SysVMEnter && NODE_STATE(ksCurThread)->tcbArch.tcbVCPU) {
         vcpu_update_state_sysvmenter(NODE_STATE(ksCurThread)->tcbArch.tcbVCPU);
         if (NODE_STATE(ksCurThread)->tcbBoundNotification
             && notification_ptr_get_state(NODE_STATE(ksCurThread)->tcbBoundNotification) == NtfnState_Active) {
@@ -137,25 +136,25 @@ if (syscall == SysVMEnter && NODE_STATE(ksCurThread)->tcbArch.tcbVCPU) {
         }
     }
 #endif
-/* check for undefined syscall */
-if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
+    /* check for undefined syscall */
+    if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
 #ifdef TRACK_KERNEL_ENTRIES
-ksKernelEntry.path = Entry_UnknownSyscall;
+        ksKernelEntry.path = Entry_UnknownSyscall;
         /* ksKernelEntry.word word is already set to syscall */
 #endif /* TRACK_KERNEL_ENTRIES */
-/* Contrary to the name, this handles all non-standard syscalls used in
- * debug builds also.
- */
-handleUnknownSyscall(syscall);
-} else {
+        /* Contrary to the name, this handles all non-standard syscalls used in
+         * debug builds also.
+         */
+        handleUnknownSyscall(syscall);
+    } else {
 #ifdef TRACK_KERNEL_ENTRIES
-ksKernelEntry.is_fastpath = 0;
+        ksKernelEntry.is_fastpath = 0;
 #endif /* TRACK KERNEL ENTRIES */
-handleSyscall(syscall);
-}
+        handleSyscall(syscall);
+    }
 
-restore_user_context();
-UNREACHABLE();
+    restore_user_context();
+    UNREACHABLE();
 }
 
 #ifdef CONFIG_KERNEL_MCS

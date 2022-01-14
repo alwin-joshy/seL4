@@ -794,8 +794,8 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     callerSlot->cteMDBNode = nullMDBNode;
 #endif
 
-    /* I know there's no fault, so straight to the transfer. */
 #ifdef CONFIG_EXCEPTION_FASTPATH
+
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         bool_t restart = 0;
         switch (fault_type) {
@@ -823,6 +823,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
                 restart = 1;
             }
         }
+
+        /* TODO: This works here right now because vm faults always restart - the alternative is that the thread becomes inactive,
+         * which would either be handled in the fastpath or redirected into the slowpath (preferred) - either way, this check
+         * will need to be moved above the point of no return to be handled to ensure we don't try and force a switch to an
+         * inactive thread. */
 
         if (restart) {
             word_t pc = getRestartPC(caller);
@@ -860,8 +865,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
 
     /* Dest thread is set Running, but not queued. */
-    thread_state_ptr_set_tsType_np(&caller->tcbState,
-    ThreadState_Running);
+    thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
     switchToThread_fp(caller, cap_pd, stored_hw_asid);
 
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
