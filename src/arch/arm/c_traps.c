@@ -67,7 +67,7 @@ inline void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = 0;
 #endif
-    handleVMFaultEvent(type);
+    handleVMFaultEvent(type); 
 
     restore_user_context();
     UNREACHABLE();
