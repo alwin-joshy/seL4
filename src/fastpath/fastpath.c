@@ -254,7 +254,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     }
 #endif
 
-#ifdef CONFIG_ARCH_RISCV64
+#ifdef CONFIG_ARCH_RISCV
     uint64_t addr;
 
     addr = read_stval();
