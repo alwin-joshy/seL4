@@ -146,6 +146,129 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     }
 #endif /* ENABLE_SMP_SUPPORT */
 
+#ifdef CONFIG_ARCH_AARCH64
+    switch (type) {
+    case ARMDataAbort: {
+        word_t addr, fault;
+
+        addr = getFAR();
+        fault = getDFSR();
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        /* use the IPA */
+        if (ARCH_NODE_STATE(armHSVCPUActive)) {
+            addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
+        }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+
+    case ARMPrefetchAbort: {
+        word_t pc, fault;
+
+        pc = getRestartPC(NODE_STATE(ksCurThread));
+        fault = getIFSR();
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        if (ARCH_NODE_STATE(armHSVCPUActive)) {
+            pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
+        }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
+        break;
+    }
+    }
+#endif
+
+#ifdef CONFIG_ARCH_AARCH32
+    switch (type) {
+    case ARMDataAbort: {
+        word_t addr, fault;
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        addr = getHDFAR();
+        addr = (addressTranslateS1CPR(addr) & ~MASK(PAGE_BITS)) | (addr & MASK(PAGE_BITS));
+        /* MSBs tell us that this was a DataAbort */
+        fault = getHSR() & 0x3ffffff;
+#else
+        addr = getFAR();
+        fault = getDFSR();
+#endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+        if (isDebugFault(fault)) {
+            vm_fault_slowpath(type);
+        }
+#endif
+
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+    case ARMPrefetchAbort: {
+        word_t pc, fault;
+
+        pc = getRestartPC(NODE_STATE(ksCurThread));
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        pc = (addressTranslateS1CPR(pc) & ~MASK(PAGE_BITS)) | (pc & MASK(PAGE_BITS));
+        /* MSBs tell us that this was a PrefetchAbort */
+        fault = getHSR() & 0x3ffffff;
+#else
+        fault = getIFSR();
+#endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+        if (isDebugFault(fault)) {
+            vm_fault_slowpath(type);
+        }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
+        break; 
+    }
+    }
+#endif
+
+#ifdef CONFIG_ARCH_X86_64
+    word_t addr;
+    uint32_t fault;
+
+    addr = getFaultAddr();
+    fault = getRegister(NODE_STATE(ksCurThread), Error);
+
+    switch (type) {
+    case X86DataFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+    case X86InstructionFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
+        break;
+    }
+    }
+#endif
+
+#ifdef CONFIG_ARCH_RISCV
+    word_t addr;
+
+    addr = read_stval();
+
+    switch (type) {
+    case RISCVLoadPageFault:
+    case RISCVLoadAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
+        break;
+    case RISCVStorePageFault:
+    case RISCVStoreAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
+        break;
+    case RISCVInstructionPageFault:
+    case RISCVInstructionAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
+        break;
+    }
+#endif
+
     /*
      * --- POINT OF NO RETURN ---
      *
@@ -200,80 +323,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(&replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
 #endif
 
-#ifdef CONFIG_ARCH_AARCH64
-    switch (type) {
-    case ARMDataAbort: {
-        word_t addr, fault;
 
-        addr = getFAR();
-        fault = getDFSR();
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        /* use the IPA */
-        if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
-        }
-#endif
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-        break;
-    }
-
-    case ARMPrefetchAbort: {
-        word_t pc, fault;
-
-        pc = getRestartPC(NODE_STATE(ksCurThread));
-        fault = getIFSR();
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
-        }
-#endif
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
-        break;
-    }
-    }
-#endif
-
-#ifdef CONFIG_ARCH_X86_64
-    word_t addr;
-    uint32_t fault;
-
-    addr = getFaultAddr();
-    fault = getRegister(NODE_STATE(ksCurThread), Error);
-
-    switch (type) {
-    case X86DataFault: {
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-        break;
-    }
-    case X86InstructionFault: {
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
-        break;
-    }
-    }
-#endif
-
-#ifdef CONFIG_ARCH_RISCV
-    uint64_t addr;
-
-    addr = read_stval();
-
-    switch (type) {
-    case RISCVLoadPageFault:
-    case RISCVLoadAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
-        break;
-    case RISCVStorePageFault:
-    case RISCVStoreAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
-        break;
-    case RISCVInstructionPageFault:
-    case RISCVInstructionAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
-        break;
-    }
-#endif
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     word_t ipa, va;
@@ -783,7 +833,6 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         sc->scReply->replyNext = reply_ptr->replyNext;
     }
 
-    /* TODO neccessary? */
     reply_ptr->replyPrev.words[0] = 0;
     reply_ptr->replyNext.words[0] = 0;
 #else
