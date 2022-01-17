@@ -224,7 +224,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
         }
 #endif
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
-        break; 
+        break;
     }
     }
 #endif
