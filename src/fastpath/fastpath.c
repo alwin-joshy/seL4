@@ -235,7 +235,9 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
 
     addr = getFaultAddr();
     fault = getRegister(NODE_STATE(ksCurThread), Error);
-
+#ifdef CONFIG_ARCH_IA32
+    userError("HERE!");
+#endif
     switch (type) {
     case X86DataFault: {
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
