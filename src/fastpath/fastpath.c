@@ -229,7 +229,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     }
 #endif
 
-#ifdef CONFIG_ARCH_X86_64
+#if defined(CONFIG_ARCH_X86) || defined(CONFIG_ARCH_IA32)
     word_t addr;
     uint32_t fault;
 
