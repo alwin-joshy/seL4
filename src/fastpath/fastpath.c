@@ -58,7 +58,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             word_t badge2 = notification_ptr_get_ntfnMsgIdentifier(ntfnPtr);
             badge2 |= badge;
             notification_ptr_set_ntfnMsgIdentifier(ntfnPtr, badge2);
-            fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+            restore_user_context();
         }
         case NtfnState_Idle: {
             tcb_t *tcb = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
@@ -106,6 +106,8 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     /* Get HW ASID */
                     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
 #endif
+                    /* Try and wake up threads */
+                    awaken();
 
                     /* Let gcc optimise this out for 1 domain */
                     dom = maxDom ? ksCurDomain : 0;
@@ -138,29 +140,49 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #endif
                     cancelIPC_fp(tcb);
                     thread_state_ptr_set_tsType_np(&tcb->tcbState, ThreadState_Running);
-                    setRegister(tcb, badgeRegister, badge);
 
                     if (NODE_STATE(ksCurThread)->tcbPriority < tcb->tcbPriority) {
-                        userError("here");
                         /* switch to waiter immediately */
                         SCHED_ENQUEUE_CURRENT_TCB;
-                        switchToThread_fp(tcb, cap_pd, stored_hw_asid);
 
-                        if (sc_constant_bandwidth(NODE_STATE(ksCurThread)->tcbSchedContext)) {
-                            refill_unblock_check(NODE_STATE(ksCurThread)->tcbSchedContext);
+                        /* Fastpath version */
+                        checkDomainTime();
+
+                        if (NODE_STATE(ksSchedulerAction) == SchedulerAction_ChooseNewThread) {
+                            scheduleChooseNewThread();
+                        } else {
+                            switchToThread_fp(tcb, cap_pd, stored_hw_asid);
                         }
 
-                        assert(refill_ready(NODE_STATE(ksCurThread)->tcbSchedContext));
-                        assert(refill_sufficient(NODE_STATE(ksCurThread)->tcbSchedContext, 0));
-                        commitTime();
 
-                        NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
-                        setNextInterrupt();
+#ifdef ENABLE_SMP_SUPPORT
+                        doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+                        ARCH_NODE_STATE(ipiReschedulePending) = 0;
+#endif /* ENABLE_SMP_SUPPORT */
+                        switchSchedContext();
+
+                        if (NODE_STATE(ksReprogram)) {
+                            setNextInterrupt();
+                            NODE_STATE(ksReprogram) = false;
+                        }
+
+                        if (NODE_STATE(ksCurThread) == tcb) {
+                            fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+                        } else {
+                            setRegister(tcb, badgeRegister, badge);
+                            restore_user_context();
+                        }
+
+                        /* Conventional */
+//                        NODE_STATE(ksSchedulerAction) = tcb;
+//                        schedule();
                     } else {
                         /* continue executing signaller */
                         SCHED_ENQUEUE(tcb);
+                        setRegister(tcb, badgeRegister, badge);
+                        restore_user_context();
                     }
-                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+
                     UNREACHABLE();
                 }
 #ifdef CONFIG_VTX
