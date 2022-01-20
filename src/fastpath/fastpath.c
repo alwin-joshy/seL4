@@ -142,6 +142,14 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     thread_state_ptr_set_tsType_np(&tcb->tcbState, ThreadState_Running);
 
                     if (NODE_STATE(ksCurThread)->tcbPriority < tcb->tcbPriority) {
+//                        SCHED_ENQUEUE_CURRENT_TCB;
+//                        switchToThread_fp(tcb, cap_pd, stored_hw_asid);
+//                        NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
+//                        fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+//                        UNREACHABLE();
+
+
+
                         /* switch to waiter immediately */
                         SCHED_ENQUEUE_CURRENT_TCB;
 
@@ -150,6 +158,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
                         if (NODE_STATE(ksSchedulerAction) == SchedulerAction_ChooseNewThread) {
                             scheduleChooseNewThread();
+                            NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
                         } else {
                             switchToThread_fp(tcb, cap_pd, stored_hw_asid);
                         }
@@ -167,7 +176,9 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                         }
 
                         if (NODE_STATE(ksCurThread) == tcb) {
-                            fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+                            setRegister(tcb, badgeRegister, badge);
+                            restore_user_context();
+//                            fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
                         } else {
                             setRegister(tcb, badgeRegister, badge);
                             restore_user_context();
@@ -180,6 +191,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                         /* continue executing signaller */
                         SCHED_ENQUEUE(tcb);
                         setRegister(tcb, badgeRegister, badge);
+                        schedule();
                         restore_user_context();
                     }
 
@@ -199,11 +211,15 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                      * in the middle of an seL4_Call.
                      */
                     ntfn_set_active(ntfnPtr, badge);
-                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+                    schedule();
+                    restore_user_context();
+//                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
                 }
             } else {
                 ntfn_set_active(ntfnPtr, badge);
-                fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+                schedule();
+                restore_user_context();
+//                fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
             }
         }
         case NtfnState_Waiting: {
@@ -218,16 +234,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             /* Haskell error "WaitingNtfn Notification must have non-empty queue" */
             assert(dest);
 
-            /* Dequeue TCB */
-            ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-            notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
-            notification_ptr_set_ntfnQueue_tail(ntfnPtr, (word_t)ntfn_queue.end);
-
-            /* set the thread state to idle if the queue is empty */
-            if (!ntfn_queue.head) {
-                notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-            }
-
             maybeDonateSchedContext(dest, ntfnPtr);
 
             /* We can't just resume the current thread as the default behaviour would be to invoke the scheduler */
@@ -235,7 +241,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 slowpath(SysSend);
             }
 
-/* Get destination thread VTable */
+            /* Get destination thread VTable */
             newVTable = TCB_PTR_CTE_PTR(dest, tcbVTable)->cap;
 
             /* Ensure that the destination has a valid VTable. */
@@ -245,6 +251,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
             /* Get vspace root. */
             cap_pd = cap_vtable_cap_get_vspace_root_fp(newVTable);
+
 
 #ifdef CONFIG_ARCH_AARCH32
             /* Get HW ASID */
@@ -268,6 +275,8 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     /* Get HW ASID */
                     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
 #endif
+            /* Try and wake up threads */
+            awaken();
 
             /* Let gcc optimise this out for 1 domain */
             dom = maxDom ? ksCurDomain : 0;
@@ -299,29 +308,63 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             ksKernelEntry.is_fastpath = true;
 #endif
 
-        thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
-        setRegister(dest, badgeRegister, badge);
-        if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
-            /* switch to waiter immediately */
-            SCHED_ENQUEUE_CURRENT_TCB;
-            switchToThread_fp(dest, cap_pd, stored_hw_asid);
+            /* Dequeue TCB */
+            ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
+            notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
+            notification_ptr_set_ntfnQueue_tail(ntfnPtr, (word_t)ntfn_queue.end);
 
-            if (sc_constant_bandwidth(NODE_STATE(ksCurThread)->tcbSchedContext)) {
-                refill_unblock_check(NODE_STATE(ksCurThread)->tcbSchedContext);
+            /* set the thread state to idle if the queue is empty */
+            if (!ntfn_queue.head) {
+                notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
             }
 
-            assert(refill_ready(NODE_STATE(ksCurThread)->tcbSchedContext));
-            assert(refill_sufficient(NODE_STATE(ksCurThread)->tcbSchedContext, 0));
-            commitTime();
+            thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
+            setRegister(dest, badgeRegister, badge);
+            if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
+//                SCHED_ENQUEUE_CURRENT_TCB;
+//                switchToThread_fp(dest, cap_pd, stored_hw_asid);
+//                NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
+//                fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+//                UNREACHABLE();
+                /* switch to waiter immediately */
+                SCHED_ENQUEUE_CURRENT_TCB;
 
-            NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
-            setNextInterrupt();
-        } else {
-            /* continue executing signaller */
-            SCHED_ENQUEUE(dest);
-        }
-        fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
-        UNREACHABLE();
+                /* Fastpath version */
+                checkDomainTime();
+
+                if (NODE_STATE(ksSchedulerAction) == SchedulerAction_ChooseNewThread) {
+                    scheduleChooseNewThread();
+                    NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
+                } else {
+                    switchToThread_fp(dest, cap_pd, stored_hw_asid);
+                }
+
+#ifdef ENABLE_SMP_SUPPORT
+                doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+                ARCH_NODE_STATE(ipiReschedulePending) = 0;
+#endif /* ENABLE_SMP_SUPPORT */
+                switchSchedContext();
+
+                if (NODE_STATE(ksReprogram)) {
+                    setNextInterrupt();
+                    NODE_STATE(ksReprogram) = false;
+                }
+
+                if (NODE_STATE(ksCurThread) == dest) {
+                    setRegister(dest b, badgeRegister, badge);
+                    restore_user_context();
+//                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+                } else {
+                    setRegister(dest, badgeRegister, badge);
+                    restore_user_context();
+                }
+            } else {
+                /* continue executing signaller */
+                setRegister(dest, badgeRegister, badge);
+                SCHED_ENQUEUE(dest);
+                schedule();
+                restore_user_context();
+            }
         }
     }
     UNREACHABLE();
