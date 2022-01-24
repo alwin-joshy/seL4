@@ -677,7 +677,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         slowpath(SysReplyRecv);
     }
-#else // TODO: Will be able to get rid of this once all exceptions are accounted for
+#else
     if (unlikely(fault_type != seL4_Fault_NullFault && fault_type != seL4_Fault_VMFault)) {
         slowpath(SysReplyRecv);
     }
@@ -872,11 +872,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         }
         }
 
-        /* TODO: This works here right now because vm faults always restart - the alternative is that the thread becomes inactive,
-         * which would either be handled in the fastpath or redirected into the slowpath (preferred) - either way, this check
-         * will need to be moved above the point of no return to be handled to ensure we don't try and force a switch to an
-         * inactive thread. */
-
+        /* Note - this works as is for VM faults but will need to be changed when other faults are added. This is because
+         * vm faults always restart the faulting thread upon reply but this is not necessarily the case with other types
+         * of faults, which may instead become inactive. This can either be handled in the slowpath or redirected to the
+         * slowpath, but either way it must be changed so that we do not try and forcefully switch to a thread which is
+         * meant to be inactive. */
         if (restart) {
             word_t pc = getRestartPC(caller);
             setNextPC(caller, pc);
