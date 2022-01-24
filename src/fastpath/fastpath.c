@@ -73,7 +73,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                         slowpath(SysSend);
                     }
 
-/* Get destination thread VTable */
+                    /* Get destination thread VTable */
                     newVTable = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
 
                     /* Ensure that the destination has a valid VTable. */
@@ -135,6 +135,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     }
 #endif /* ENABLE_SMP_SUPPORT */
 
+                    /* This is basically the check in checkDomainTime(), which needs more scheduler logic */
+                    if (unlikely(isCurDomainExpired())) {
+                        slowpath(SysSend);
+                    }
+
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
 #endif
@@ -142,56 +147,34 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     thread_state_ptr_set_tsType_np(&tcb->tcbState, ThreadState_Running);
 
                     if (NODE_STATE(ksCurThread)->tcbPriority < tcb->tcbPriority) {
-//                        SCHED_ENQUEUE_CURRENT_TCB;
-//                        switchToThread_fp(tcb, cap_pd, stored_hw_asid);
-//                        NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
-//                        fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
-//                        UNREACHABLE();
-
-
-
                         /* switch to waiter immediately */
                         SCHED_ENQUEUE_CURRENT_TCB;
 
-                        /* Fastpath version */
-                        checkDomainTime();
+                        switchToThread_fp(tcb, cap_pd, stored_hw_asid);
 
-                        if (NODE_STATE(ksSchedulerAction) == SchedulerAction_ChooseNewThread) {
-                            scheduleChooseNewThread();
+                        /* In case NODE_STATE(ksSchedulerAction) was messed up by awaken() */
+                        if (NODE_STATE(ksSchedulerAction) != SchedulerAction_ResumeCurrentThread) {
+                            SCHED_ENQUEUE(NODE_STATE(ksSchedulerAction));
                             NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
-                        } else {
-                            switchToThread_fp(tcb, cap_pd, stored_hw_asid);
                         }
-
 
 #ifdef ENABLE_SMP_SUPPORT
                         doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
                         ARCH_NODE_STATE(ipiReschedulePending) = 0;
 #endif /* ENABLE_SMP_SUPPORT */
-                        switchSchedContext();
 
+                        switchSchedContext();
                         if (NODE_STATE(ksReprogram)) {
                             setNextInterrupt();
                             NODE_STATE(ksReprogram) = false;
                         }
 
-                        if (NODE_STATE(ksCurThread) == tcb) {
-                            setRegister(tcb, badgeRegister, badge);
-                            restore_user_context();
-//                            fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
-                        } else {
-                            setRegister(tcb, badgeRegister, badge);
-                            restore_user_context();
-                        }
-
-                        /* Conventional */
-//                        NODE_STATE(ksSchedulerAction) = tcb;
-//                        schedule();
+                        setRegister(tcb, badgeRegister, badge);
+                        restore_user_context();
                     } else {
                         /* continue executing signaller */
                         SCHED_ENQUEUE(tcb);
                         setRegister(tcb, badgeRegister, badge);
-                        schedule();
                         restore_user_context();
                     }
 
@@ -211,15 +194,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                      * in the middle of an seL4_Call.
                      */
                     ntfn_set_active(ntfnPtr, badge);
-                    schedule();
                     restore_user_context();
-//                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
                 }
             } else {
                 ntfn_set_active(ntfnPtr, badge);
-                schedule();
                 restore_user_context();
-//                fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
             }
         }
         case NtfnState_Waiting: {
@@ -304,6 +283,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             }
 #endif /* ENABLE_SMP_SUPPORT */
 
+            /* This is basically the check in checkDomainTime(), which needs more scheduler logic */
+            if (unlikely(isCurDomainExpired())) {
+                slowpath(SysSend);
+            }
+
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
 #endif
@@ -319,24 +303,17 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             }
 
             thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
-            setRegister(dest, badgeRegister, badge);
+
             if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
-//                SCHED_ENQUEUE_CURRENT_TCB;
-//                switchToThread_fp(dest, cap_pd, stored_hw_asid);
-//                NODE_STATE(ksCurSC) = NODE_STATE(ksCurThread)->tcbSchedContext;
-//                fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
-//                UNREACHABLE();
                 /* switch to waiter immediately */
                 SCHED_ENQUEUE_CURRENT_TCB;
 
-                /* Fastpath version */
-                checkDomainTime();
+                switchToThread_fp(dest, cap_pd, stored_hw_asid);
 
-                if (NODE_STATE(ksSchedulerAction) == SchedulerAction_ChooseNewThread) {
-                    scheduleChooseNewThread();
+                /* In case NODE_STATE(ksSchedulerAction) was messed up by awaken() */
+                if (NODE_STATE(ksSchedulerAction) != SchedulerAction_ResumeCurrentThread) {
+                    SCHED_ENQUEUE(NODE_STATE(ksSchedulerAction));
                     NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
-                } else {
-                    switchToThread_fp(dest, cap_pd, stored_hw_asid);
                 }
 
 #ifdef ENABLE_SMP_SUPPORT
@@ -350,19 +327,13 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     NODE_STATE(ksReprogram) = false;
                 }
 
-                if (NODE_STATE(ksCurThread) == dest) {
-                    setRegister(dest b, badgeRegister, badge);
-                    restore_user_context();
-//                    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
-                } else {
-                    setRegister(dest, badgeRegister, badge);
-                    restore_user_context();
-                }
+                setRegister(dest, badgeRegister, badge);
+                restore_user_context();
+
             } else {
                 /* continue executing signaller */
                 setRegister(dest, badgeRegister, badge);
                 SCHED_ENQUEUE(dest);
-                schedule();
                 restore_user_context();
             }
         }
