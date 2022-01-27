@@ -26,6 +26,7 @@
 #include <arch/object/iospace.h>
 #include <arch/object/vcpu.h>
 #include <arch/machine/tlb.h>
+#define MAX_RANGE 32
 
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
 #include <benchmark/benchmark_track.h>
@@ -84,6 +85,21 @@ static word_t CONST APFromVMRights(vm_rights_t vm_rights)
     }
 }
 
+static word_t CONST VMRightsFromAP(word_t ap) {
+    switch (ap) {
+    case 0:
+        return VMNoAccess;
+    case 1:
+        return VMKernelOnly;
+    case 2:
+        return VMReadOnly;
+    case 3:
+        return VMReadWrite;
+    default:
+        fail("Invalid AP");
+    }
+}
+
 #else
 /* AP encoding slightly different. AP only used for kernel mappings which are fixed after boot time */
 BOOT_CODE
@@ -123,6 +139,18 @@ static word_t CONST HAPFromVMRights(vm_rights_t vm_rights)
     }
 }
 
+static word_t CONST VMRightsFromHAP(word_t hap) {
+    switch (hap) {
+    case 0:
+        return VMKernelOnly;
+    case 1:
+        return VMReadOnly;
+    case 3:
+        return VMReadWrite;
+    default:
+        fail("Invalid HAP");
+    }
+}
 #endif
 
 vm_rights_t CONST maskVMRights(vm_rights_t vm_rights, seL4_CapRights_t cap_rights_mask)
@@ -1991,12 +2019,357 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
 
     return EXCEPTION_NONE;
 }
+static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
+    vptr_t curr_vaddr = base_vaddr;
+    int num = 0;
+    vm_rights_t vm_rights;
+    word_t ap;
+
+    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+        lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(base_pd, curr_vaddr);
+
+        if (lu_ret_pt.status == EXCEPTION_NONE) {
+            int max = PAGES_PER_LARGE_PAGE
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+            if (pte_pte_small_ptr_get_contiguous_hint(lu_ret_pt.ptSlot) == 0) {
+                max = 1;
+            }
+            vm_rights = maskVMRights(VMRightsfromHAP(pte_pte_small_ptr_get_HAP(pd[0]), rights);
+            ap = HAPFromVMRights(vm_rights)
+#else
+            if (pte_ptr_get_pteType(lu_ret.ptSlot) == pte_pte_small) {
+                max = 1;
+            }
+            vm_rights = maskVMRights(VMRightsfromAP(pte_pte_small_ptr_get_AP(pd[0]), rights);
+            ap = APFromVMRights(vm_rights)
+#endif
+
+            for (int i = 0; i < max; i++) {
+                if (rights.words[0] != 15) {
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+                    pte_pte_small_ptr_set_HAP(lu_ret_pt.ptSlot, ap);
+#else
+                    pte_pte_small_ptr_set_AP(lu_ret_pt.ptSlot, ap);
+#endif
+                } else {
+                    lu_ret.ptSlot[i] = pte_pte_invalid_new();
+                }
+            }
+
+            if (max == 1) {
+                cleanByVA_PoU((word_t)lu_ret.ptSlot, addrFromPPtr(lu_ret.ptSlot));
+            } else {
+                cleanCacheRange_PoU((word_t)&lu_ret.ptSlot[0], LAST_BYTE_PTE(lu_ret.ptSlot, PAGES_PER_LARGE_PAGE),
+                                    addrFromPPtr(&lu_ret.ptSlot[0]));
+            }
+            curr_vaddr += max * BIT(pageBitsForSize(ARMSmallPage));
+            num += max;
+            continue;
+        }
+
+        pde_t *pd;
+        pd = lookupPDSlot(base_pd, vptr);
+
+        if (pde_ptr_get_pdeType(pd) == pde_pde_section) {
+            int max = SECTIONS_PER_SUPER_SECTION;
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+            if (pde_pde_section_ptr_get_size(pd) == 0){
+                max = 1;
+            }
+            vm_rights = maskVMRights(VMRightsfromHAP(pde_pde_section_ptr_get_HAP(pd[0]), rights);
+            ap = HAPFromVMRights(vm_rights)
+#else
+            if (pde_pde_section_ptr_get_contiguous_hint(pd) == 0) {
+                max = 1;
+            }
+            vm_rights = maskVMRights(VMRightsfromAP(pde_pde_section_ptr_get_AP(pd[0]), rights);
+            ap = APFromVMRights(vm_rights)
+#endif
+
+
+            for (i = 0; i < max; i++) {
+                if (rights.words[0] != 15) {
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+                    pde_pde_section_ptr_set_HAP(pd[i], ap)
+#else
+                    pde_pde_section_ptr_set_AP(pd[i], ap)
+#endif
+                } else {
+                    pd[i] = pde_pde_invalid_new(0, 0);
+                }
+            }
+
+            if (max == 1) {
+                cleanByVA_PoU((word_t)pd, addrFromPPtr(pd))
+            } else {
+                cleanCacheRange_PoU((word_t)&pd[0], LAST_BYTE_PDE(pd, SECTIONS_PER_SUPER_SECTION),
+                                    addrFromPPtr(&pd[0]));
+            }
+            curr_vaddr += max * BIT(pageBitsForSize(ARMSection));
+            num += max;
+        }
+
+    }
+
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
+
+    return num;
+}
 
 static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t length,
                                                     cptr_t cptr, cte_t *cte, cap_t cap,
                                                     word_t *buffer)
 {
     switch (invLabel) {
+    case ARMPDRange_Protect: {
+        if (length < 3) {
+            userError("Vspace: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vptr_t base_vaddr = getSyscallArg(0, buffer);
+        vptr_t end_vaddr = getSyscallArg(1, buffer);
+        seL4_CapRights_t rights = rightsFromWord(getSyscallArg(2, buffer));
+
+        if (unlikely(cap_get_capType(cap) != cap_page_directory_cap ||
+                     !cap_page_directory_cap_get_capPDIsMapped(cap))) {
+            userError("PD Range Protect: Invalid cap.");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the supplied pd is ok */
+        pde_t *pd = PDE_PTR(cap_page_directory_cap_get_capPDBasePtr(cap));
+        asid_t asid = cap_page_directory_cap_get_capPDMappedASID(cap);
+
+        findPDForASID_ret_t find_ret = findPDForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("PD Range Protect: No PD for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.pd != pd)) {
+            userError("PD Range Protect: Invalid PD Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(base_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(base_vaddr, ARMHugePage))) {
+            userError("VSpace: Start vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
+                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
+            userError("VSpace: End vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (base_vaddr > end_vaddr) {
+            userError("VSpace: End of the range must be after the start of the range.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (end_vaddr > USER_TOP) {
+            userError("VSpace: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Instead of invalidating line by line, we just invalidate all the TLB entries for that ASID at the end*/
+        /* TODO: Don't think AARCH supports a virtual address range TLB flush for given ASID. */
+        if (performVspaceInvocationProtect(pd, base_vaddr, end_vaddr, rights)) {
+            /* Switch to the address space to allow a cache clean by VA */
+            bool_t root_switched = setVMRootForFlush(pd, asid);
+            pde_t stored_hw_asid = loadHWASID(asid);
+
+            if (pde_pde_invalid_get_stored_asid_valid(stored_hw_asid)) {
+                base_addr = vptr & ~MASK(12);
+
+                /* Do the TLB flush */
+                invalidateTranslationASID(pde_pde_invalid_get_stored_hw_asid(stored_hw_asid));
+
+                if (root_switched) {
+                    setVMRoot(NODE_STATE(ksCurThread));
+                }
+            }
+        }
+
+        /* This makes the page mapping benchmarks much faster but there is no real way of knowing how it affects the
+         * system without macrobenchmarks. If they are choosing to do a range unmapping, they opt into the tlb flush. */
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    } case ARMPDPage_Map: {
+        word_t vaddr, vtop, w_rightsMask;
+        paddr_t capFBasePtr;
+        cap_t pdCap;
+        pde_t *pd;
+        asid_t asid;
+        vm_rights_t capVMRights, vmRights;
+        vm_page_size_t frameSize;
+        vm_attributes_t attr;
+
+        if (unlikely(length < 3 || current_extra_caps.excaprefs[0] == NULL)) {
+            userError("ARMPageMap: Truncated message.");
+            current_syscall_error.type =
+                seL4_TruncatedMessage;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vaddr = getSyscallArg(0, buffer);
+        w_rightsMask = getSyscallArg(1, buffer);
+        attr = vmAttributesFromWord(getSyscallArg(2, buffer));
+        pageCap = current_extra_caps.excaprefs[0]->cap;
+
+        frameSize = generic_frame_cap_get_capFSize(pageCap);
+        capVMRights = generic_frame_cap_get_capFVMRights(pageCap);
+
+        if (unlikely(cap_get_capType(cap) != cap_page_directory_cap || !cap_page_directory_cap_get_capPDIsMapped(cap))) {
+            userError("ARMPageMap: Bad PageDirectory cap.");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        pd = PDE_PTR(cap_page_directory_cap_get_capPDBasePtr(cap));
+        asid = cap_page_directory_cap_get_capPDMappedASID(cap);
+
+        asid_t frame_asid = generic_frame_cap_get_capFMappedASID;
+        pde_t *frame_pd = pd;
+
+        if (generic_frame_cap_get_capFIsMapped(pageCap)) {
+            if (frame_asid != asid) {
+                find_ret = findPDForASID(asid);
+                if (likely(find_ret.status == EXCEPTION_NONE)) {
+                    frame_pd = find_ret.pd;
+                } else {
+                    asid = asidInvalid;
+                }
+            }
+        } else {
+            vtop = vaddr + BIT(pageBitsForSize(frameSize)) - 1;
+
+            if (unlikely(vtop >= USER_TOP)) {
+                userError("ARMPageMap: Cannot map frame over kernel window. vaddr: 0x%08lx, USER_TOP: 0x%08x", vaddr, USER_TOP);
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        {
+            findPDForASID_ret_t find_ret;
+
+            find_ret = findPDForASID(asid);
+            if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+                userError("ARMPageMap: No PD for ASID");
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (unlikely(find_ret.pd != pd)) {
+                userError("ARMPageMap: ASID lookup failed.");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 0;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        vmRights = maskVMRights(capVMRights, rightsFromWord(w_rightsMask));
+
+        if (unlikely(!checkVPAlignment(frameSize, vaddr))) {
+            userError("ARMPageMap: Virtual address has incorrect alignment.");
+            current_syscall_error.type = seL4_AlignmentError;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        capFBasePtr = addrFromPPtr((void *) generic_frame_cap_get_capFBasePtr(pageCap));
+
+        cap = generic_frame_cap_set_capFMappedAddress(pageCap, asid, vaddr);
+        if (frameSize == ARMSmallPage || frameSize == ARMLargePage) {
+            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(frame_pd, vaddr);
+
+                if (likely(lu_ret_pt.status == EXCEPTION_NONE)) {
+                    if (pte_pte_small_ptr_get_address(lu_ret_pt.ptSlot) == capFBasePtr) {
+                        userError("ARMPageMap: Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1;
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            create_mappings_pte_return_t map_ret;
+            map_ret = createSafeMappingEntries_PTE(capFBasePtr, vaddr,
+                                                   frameSize, vmRights,
+                                                   attr, pd);
+            if (unlikely(map_ret.status != EXCEPTION_NONE)) {
+#ifdef CONFIG_PRINTING
+                if (current_syscall_error.type == seL4_DeleteFirst) {
+                    userError("ARMPageMap: Page table entry was not free.");
+                }
+#endif
+                return map_ret.status;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performPageInvocationMapPTE(asid, pageCap, cte,
+                                               map_ret.pte,
+                                               map_ret.pte_entries);
+        } else {
+            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(frame_pd, vaddr);
+
+                if (likely(lu_ret_pd.status == EXCEPTION_NONE)) {
+                    if (pde_pde_section_ptr_get_address(lu_ret_pd.pdSlot) == capFBasePtr) {
+                        userError("ARMPageMap: Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1;
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+            create_mappings_pde_return_t map_ret;
+            map_ret = createSafeMappingEntries_PDE(capFBasePtr, vaddr,
+                                                   frameSize, vmRights,
+                                                   attr, pd);
+            if (unlikely(map_ret.status != EXCEPTION_NONE)) {
+#ifdef CONFIG_PRINTING
+                if (current_syscall_error.type == seL4_DeleteFirst) {
+                    userError("ARMPageMap: Page directory entry was not free.");
+                }
+#endif
+                return map_ret.status;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performPageInvocationMapPDE(asid, pageCap, cte,
+                                               map_ret.pde,
+                                               map_ret.pde_entries);
+    }
     case ARMPDClean_Data:
     case ARMPDInvalidate_Data:
     case ARMPDCleanInvalidate_Data:

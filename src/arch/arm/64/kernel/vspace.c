@@ -1721,10 +1721,6 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
-// static void protect_page(uint64_t *word, vm_rights_t vm_rights) {
-//     *word = ((*word & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull))
-// }
-
 
 static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
@@ -1755,10 +1751,10 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pd.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot)) {
             /* If the end_vaddr is somewhere inside the large page*/
-            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
-                curr_vaddr = end_vaddr;
-                break; 
-            }
+//            if (curr_vaddr + (1 << pageBitsForSize(ARMLargePage)) > end_vaddr) {
+//                curr_vaddr = end_vaddr;
+//                break;
+//            }
 
             if (rights.words[0] != 15) {
                 vm_rights = maskVMRights(VMRightsfromAP(pde_pde_large_ptr_get_AP(lu_ret_pd.pdSlot)), rights);
@@ -1782,9 +1778,9 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
         /* If a large page is mapped for this vaddr */
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
             /* If the end_vaddr is somewhere inside the huge page*/
-            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
-                curr_vaddr = end_vaddr;
-                break; 
+//            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
+//                curr_vaddr = end_vaddr;
+//                break;
             }
 
             if (rights.words[0] != 15) {
@@ -1826,7 +1822,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         vptr_t base_vaddr, end_vaddr;
         findVSpaceForASID_ret_t find_ret;
 
-        if (length < 2) {
+        if (length < 3) {
             userError("Vspace: Truncated message.");
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
