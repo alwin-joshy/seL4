@@ -2021,80 +2021,86 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
 }
 static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
-    int num = 0;
     vm_rights_t vm_rights;
     word_t ap;
 
-    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+    int i;
+    for (i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr;) {
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(base_pd, curr_vaddr);
 
         if (lu_ret_pt.status == EXCEPTION_NONE) {
-            int max = PAGES_PER_LARGE_PAGE
+            int max = PAGES_PER_LARGE_PAGE;
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
             if (pte_pte_small_ptr_get_contiguous_hint(lu_ret_pt.ptSlot) == 0) {
                 max = 1;
             }
-            vm_rights = maskVMRights(VMRightsfromHAP(pte_pte_small_ptr_get_HAP(pd[0]), rights);
+            vm_rights = maskVMRights(VMRightsfromHAP(pte_pte_small_ptr_get_HAP(lu_ret_pt.ptSlot)), rights);
             ap = HAPFromVMRights(vm_rights)
 #else
-            if (pte_ptr_get_pteType(lu_ret.ptSlot) == pte_pte_small) {
+            if (pte_ptr_get_pteType(lu_ret_pt.ptSlot) == pte_pte_small) {
                 max = 1;
+                vm_rights = maskVMRights(VMRightsFromAP(pte_pte_small_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
+            } else {
+                vm_rights = maskVMRights(VMRightsFromAP(pte_pte_large_ptr_get_AP(lu_ret_pt.ptSlot)), rights);
             }
-            vm_rights = maskVMRights(VMRightsfromAP(pte_pte_small_ptr_get_AP(pd[0]), rights);
-            ap = APFromVMRights(vm_rights)
+            ap = APFromVMRights(vm_rights);
 #endif
 
             for (int i = 0; i < max; i++) {
                 if (rights.words[0] != 15) {
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-                    pte_pte_small_ptr_set_HAP(lu_ret_pt.ptSlot, ap);
+                    pte_pte_small_ptr_set_HAP(&lu_ret_pt.ptSlot[i], ap);
 #else
-                    pte_pte_small_ptr_set_AP(lu_ret_pt.ptSlot, ap);
+                    if (max == 1) {
+                        pte_pte_small_ptr_set_AP(&lu_ret_pt.ptSlot[i], ap);
+                    } else {
+                        pte_pte_large_ptr_set_AP(&lu_ret_pt.ptSlot[i], ap);
+                    }
 #endif
                 } else {
-                    lu_ret.ptSlot[i] = pte_pte_invalid_new();
+                    lu_ret_pt.ptSlot[i] = pte_pte_invalid_new();
                 }
             }
 
             if (max == 1) {
-                cleanByVA_PoU((word_t)lu_ret.ptSlot, addrFromPPtr(lu_ret.ptSlot));
+                cleanByVA_PoU((word_t)lu_ret_pt.ptSlot, addrFromPPtr(lu_ret_pt.ptSlot));
             } else {
-                cleanCacheRange_PoU((word_t)&lu_ret.ptSlot[0], LAST_BYTE_PTE(lu_ret.ptSlot, PAGES_PER_LARGE_PAGE),
-                                    addrFromPPtr(&lu_ret.ptSlot[0]));
+                cleanCacheRange_PoU((word_t)&lu_ret_pt.ptSlot[0], LAST_BYTE_PTE(lu_ret_pt.ptSlot, PAGES_PER_LARGE_PAGE),
+                                    addrFromPPtr(&lu_ret_pt.ptSlot[0]));
             }
             curr_vaddr += max * BIT(pageBitsForSize(ARMSmallPage));
-            num += max;
+            i += max;
             continue;
         }
 
         pde_t *pd;
-        pd = lookupPDSlot(base_pd, vptr);
+        pd = lookupPDSlot(base_pd, curr_vaddr);
 
         if (pde_ptr_get_pdeType(pd) == pde_pde_section) {
             int max = SECTIONS_PER_SUPER_SECTION;
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-            if (pde_pde_section_ptr_get_size(pd) == 0){
-                max = 1;
-            }
-            vm_rights = maskVMRights(VMRightsfromHAP(pde_pde_section_ptr_get_HAP(pd[0]), rights);
-            ap = HAPFromVMRights(vm_rights)
-#else
             if (pde_pde_section_ptr_get_contiguous_hint(pd) == 0) {
                 max = 1;
             }
-            vm_rights = maskVMRights(VMRightsfromAP(pde_pde_section_ptr_get_AP(pd[0]), rights);
-            ap = APFromVMRights(vm_rights)
+            vm_rights = maskVMRights(VMRightsfromHAP(pde_pde_section_ptr_get_HAP(pd)), rights);
+            ap = HAPFromVMRights(vm_rights)
+#else
+            if (pde_pde_section_ptr_get_size(pd) == 0){
+                max = 1;
+            }
+            vm_rights = maskVMRights(VMRightsFromAP(pde_pde_section_ptr_get_AP(pd)), rights);
+            ap = APFromVMRights(vm_rights);
 #endif
 
 
             for (i = 0; i < max; i++) {
                 if (rights.words[0] != 15) {
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-                    pde_pde_section_ptr_set_HAP(pd[i], ap)
+                    pde_pde_section_ptr_set_HAP(&pd[i], ap);
 #else
-                    pde_pde_section_ptr_set_AP(pd[i], ap)
+                    pde_pde_section_ptr_set_AP(&pd[i], ap);
 #endif
                 } else {
                     pd[i] = pde_pde_invalid_new(0, 0);
@@ -2102,21 +2108,21 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
             }
 
             if (max == 1) {
-                cleanByVA_PoU((word_t)pd, addrFromPPtr(pd))
+                cleanByVA_PoU((word_t)pd, addrFromPPtr(pd));
             } else {
                 cleanCacheRange_PoU((word_t)&pd[0], LAST_BYTE_PDE(pd, SECTIONS_PER_SUPER_SECTION),
                                     addrFromPPtr(&pd[0]));
             }
             curr_vaddr += max * BIT(pageBitsForSize(ARMSection));
-            num += max;
+            i += max;
         }
 
     }
 
     setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
-    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, i);
 
-    return num;
+    return i;
 }
 
 static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t length,
@@ -2162,15 +2168,13 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(base_vaddr, ARMLargePage) &&
-                     !IS_PAGE_ALIGNED(base_vaddr, ARMHugePage))) {
+        if (unlikely(!IS_PAGE_ALIGNED(base_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(base_vaddr, ARMSection))) {
             userError("VSpace: Start vaddr is not page aligned");
             current_syscall_error.type = seL4_AlignmentError;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMLargePage) &&
-                     !IS_PAGE_ALIGNED(end_vaddr, ARMHugePage))) {
+        if (unlikely(!IS_PAGE_ALIGNED(end_vaddr, ARMSmallPage) && !IS_PAGE_ALIGNED(end_vaddr, ARMSection))) {
             userError("VSpace: End vaddr is not page aligned");
             current_syscall_error.type = seL4_AlignmentError;
             return EXCEPTION_SYSCALL_ERROR;
@@ -2198,7 +2202,6 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
             pde_t stored_hw_asid = loadHWASID(asid);
 
             if (pde_pde_invalid_get_stored_asid_valid(stored_hw_asid)) {
-                base_addr = vptr & ~MASK(12);
 
                 /* Do the TLB flush */
                 invalidateTranslationASID(pde_pde_invalid_get_stored_hw_asid(stored_hw_asid));
@@ -2217,7 +2220,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
     } case ARMPDPage_Map: {
         word_t vaddr, vtop, w_rightsMask;
         paddr_t capFBasePtr;
-        cap_t pdCap;
+        cap_t pageCap;
         pde_t *pd;
         asid_t asid;
         vm_rights_t capVMRights, vmRights;
@@ -2226,8 +2229,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
 
         if (unlikely(length < 3 || current_extra_caps.excaprefs[0] == NULL)) {
             userError("ARMPageMap: Truncated message.");
-            current_syscall_error.type =
-                seL4_TruncatedMessage;
+            current_syscall_error.type = seL4_TruncatedMessage;
 
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -2251,12 +2253,12 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
         pd = PDE_PTR(cap_page_directory_cap_get_capPDBasePtr(cap));
         asid = cap_page_directory_cap_get_capPDMappedASID(cap);
 
-        asid_t frame_asid = generic_frame_cap_get_capFMappedASID;
+        asid_t frame_asid = generic_frame_cap_get_capFMappedASID(pageCap);
         pde_t *frame_pd = pd;
 
         if (generic_frame_cap_get_capFIsMapped(pageCap)) {
             if (frame_asid != asid) {
-                find_ret = findPDForASID(asid);
+                findPDForASID_ret_t find_ret = findPDForASID(asid);
                 if (likely(find_ret.status == EXCEPTION_NONE)) {
                     frame_pd = find_ret.pd;
                 } else {
@@ -2307,13 +2309,21 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
 
         capFBasePtr = addrFromPPtr((void *) generic_frame_cap_get_capFBasePtr(pageCap));
 
-        cap = generic_frame_cap_set_capFMappedAddress(pageCap, asid, vaddr);
         if (frameSize == ARMSmallPage || frameSize == ARMLargePage) {
-            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
-                lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(frame_pd, vaddr);
-
-                if (likely(lu_ret_pt.status == EXCEPTION_NONE)) {
-                    if (pte_pte_small_ptr_get_address(lu_ret_pt.ptSlot) == capFBasePtr) {
+            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(pageCap) != vaddr) {
+                lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(frame_pd, generic_frame_cap_get_capFMappedAddress(pageCap));
+                if (likely(lu_ret_pt.status == EXCEPTION_NONE) && pte_ptr_get_pteType(lu_ret_pt.ptSlot) != pte_pte_invalid) {
+                    paddr_t paddr;
+#ifndef CONFIG_ARM_HYPERVISOR_SUPPORT
+                    if (frameSize == ARMLargePage) {
+                        paddr = pte_pte_large_ptr_get_address(lu_ret_pt.ptSlot);
+                    } else {
+                        paddr = pte_pte_small_ptr_get_address(lu_ret_pt.ptSlot);
+                    }
+#else
+                    paddr = pte_pte_small_ptr_get_address(lu_ret_pt.ptSlot);
+#endif
+                    if (paddr == capFBasePtr) {
                         userError("ARMPageMap: Attempting to remap an in-use frame to a different virtual address");
                         current_syscall_error.type = seL4_InvalidArgument;
                         current_syscall_error.invalidArgumentNumber = 1;
@@ -2321,7 +2331,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
                     }
                 }
             }
-
+            pageCap = generic_frame_cap_set_capFMappedAddress(pageCap, asid, vaddr);
             create_mappings_pte_return_t map_ret;
             map_ret = createSafeMappingEntries_PTE(capFBasePtr, vaddr,
                                                    frameSize, vmRights,
@@ -2340,11 +2350,11 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
                                                map_ret.pte,
                                                map_ret.pte_entries);
         } else {
-            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
-                lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(frame_pd, vaddr);
+            if (frame_asid != asidInvalid && generic_frame_cap_get_capFMappedAddress(pageCap) != vaddr) {
+                pde_t * pdSlot = lookupPDSlot(frame_pd, generic_frame_cap_get_capFMappedAddress(pageCap));
 
-                if (likely(lu_ret_pd.status == EXCEPTION_NONE)) {
-                    if (pde_pde_section_ptr_get_address(lu_ret_pd.pdSlot) == capFBasePtr) {
+                if (pde_ptr_get_pdeType(pdSlot) == pde_pde_section) {
+                    if (pde_pde_section_ptr_get_address(pdSlot) == capFBasePtr) {
                         userError("ARMPageMap: Attempting to remap an in-use frame to a different virtual address");
                         current_syscall_error.type = seL4_InvalidArgument;
                         current_syscall_error.invalidArgumentNumber = 1;
@@ -2352,6 +2362,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
                     }
                 }
             }
+            pageCap = generic_frame_cap_set_capFMappedAddress(pageCap, asid, vaddr);
             create_mappings_pde_return_t map_ret;
             map_ret = createSafeMappingEntries_PDE(capFBasePtr, vaddr,
                                                    frameSize, vmRights,
@@ -2369,6 +2380,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
             return performPageInvocationMapPDE(asid, pageCap, cte,
                                                map_ret.pde,
                                                map_ret.pde_entries);
+        }
     }
     case ARMPDClean_Data:
     case ARMPDInvalidate_Data:
