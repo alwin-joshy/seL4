@@ -17,6 +17,7 @@
 #include <arch/kernel/tlb_bitmap.h>
 #include <object/structures.h>
 
+#define MAX_RANGE 32
 /* When using the SKIM window to isolate the kernel from the user we also need to
  * not use global mappings as having global mappings and entries in the TLB is
  * equivalent, for the purpose of exploitation, to having the mappings in the
@@ -985,6 +986,16 @@ pte_t CONST makeUserPTEInvalid(void)
            );
 }
 
+static vm_rights_t VMRightsfromSuperUserWriteable(word_t super_user, word_t writeable) {
+    if (super_user && writeable) {
+        return VMReadWrite;
+    } else if (super_user && !writeable) {
+        return VMReadOnly;
+    } else {
+        return VMKernelOnly;
+    }
+}
+
 
 static pml4e_t *lookupPML4Slot(vspace_root_t *pml4, vptr_t vptr)
 {
@@ -1295,6 +1306,521 @@ static exception_t performX64PDPTInvocationMap(cap_t cap, cte_t *ctSlot, pml4e_t
     return EXCEPTION_NONE;
 }
 
+static exception_t updatePDPTE(asid_t asid, pdpte_t pdpte, pdpte_t *pdptSlot, vspace_root_t *vspace)
+{
+    *pdptSlot = pdpte;
+    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), asid,
+                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+    return EXCEPTION_NONE;
+}
+
+static exception_t performX64ModeMap(cap_t cap, cte_t *ctSlot, pdpte_t pdpte, pdpte_t *pdptSlot, vspace_root_t *vspace)
+{
+    ctSlot->cap = cap;
+    return updatePDPTE(cap_frame_cap_get_capFMappedASID(cap), pdpte, pdptSlot, vspace);
+}
+
+struct create_mapping_pdpte_return {
+    exception_t status;
+    pdpte_t pdpte;
+    pdpte_t *pdptSlot;
+};
+typedef struct create_mapping_pdpte_return create_mapping_pdpte_return_t;
+
+static create_mapping_pdpte_return_t createSafeMappingEntries_PDPTE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
+                                                                    vm_attributes_t attr,
+                                                                    vspace_root_t *vspace)
+{
+    create_mapping_pdpte_return_t ret;
+    lookupPDPTSlot_ret_t          lu_ret;
+
+    lu_ret = lookupPDPTSlot(vspace, vaddr);
+    if (lu_ret.status != EXCEPTION_NONE) {
+        current_syscall_error.type = seL4_FailedLookup;
+        current_syscall_error.failedLookupWasSource = false;
+        ret.status = EXCEPTION_SYSCALL_ERROR;
+        /* current_lookup_fault will have been set by lookupPDSlot */
+        return ret;
+    }
+    ret.pdptSlot = lu_ret.pdptSlot;
+
+    /* check for existing page directory */
+    if ((pdpte_ptr_get_page_size(ret.pdptSlot) == pdpte_pdpte_pd) &&
+        (pdpte_pdpte_pd_ptr_get_present(ret.pdptSlot))) {
+        current_syscall_error.type = seL4_DeleteFirst;
+        ret.status = EXCEPTION_SYSCALL_ERROR;
+        return ret;
+    }
+
+    ret.pdpte = makeUserPDPTEHugePage(base, attr, vmRights);
+    ret.status = EXCEPTION_NONE;
+    return ret;
+}
+
+static exception_t decodeX86ModeMapPageAlt(word_t label, vm_page_size_t page_size, cte_t *cte, cap_t cap,
+                                 vspace_root_t *vroot, vptr_t vaddr, paddr_t paddr, vm_rights_t vm_rights,
+                                 vm_attributes_t vm_attr, asid_t asid, asid_t frame_asid, vspace_root_t *frame_vspace)
+{
+    if (config_set(CONFIG_HUGE_PAGE) && page_size == X64_HugePage) {
+        if ((frame_asid != asidInvalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(cap) != vaddr) {
+            lookupPDPTSlot_ret_t pdptSlot = lookupPDPTSlot(frame_vspace, cap_frame_cap_get_capFMappedAddress(cap));
+
+            if (likely(pdptSlot.status == EXCEPTION_NONE)) {
+                /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */
+                if (pdpte_pdpte_1g_ptr_get_page_base_address(pdptSlot.pdptSlot) == paddr) {
+                    userError("Attempting to remap an in-use frame to a different virtual address");
+                    current_syscall_error.type = seL4_InvalidArgument;
+                    current_syscall_error.invalidArgumentNumber = 1;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            }
+        }
+
+        create_mapping_pdpte_return_t map_ret;
+
+        map_ret = createSafeMappingEntries_PDPTE(paddr, vaddr, vm_rights, vm_attr, vroot);
+        if (map_ret.status != EXCEPTION_NONE) {
+            return map_ret.status;
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+
+        switch (label) {
+        case X86PageMap:
+            return performX64ModeMap(cap, cte, map_ret.pdpte, map_ret.pdptSlot, vroot);
+
+        default:
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+    }
+    fail("Invalid Page type");
+}
+
+static exception_t performX86PageInvocationMapPTE(cap_t cap, cte_t *ctSlot, pte_t *ptSlot, pte_t pte,
+                                                  vspace_root_t *vspace)
+{
+    ctSlot->cap = cap;
+    *ptSlot = pte;
+    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
+                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+    return EXCEPTION_NONE;
+}
+
+static exception_t performX86PageInvocationMapPDE(cap_t cap, cte_t *ctSlot, pde_t *pdSlot, pde_t pde,
+                                                  vspace_root_t *vspace)
+{
+    ctSlot->cap = cap;
+    *pdSlot = pde;
+    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
+                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+    return EXCEPTION_NONE;
+}
+
+struct create_mapping_pte_return {
+    exception_t status;
+    pte_t pte;
+    pte_t *ptSlot;
+};
+typedef struct create_mapping_pte_return create_mapping_pte_return_t;
+
+static create_mapping_pte_return_t createSafeMappingEntries_PTE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
+                                                                vm_attributes_t attr,
+                                                                vspace_root_t *vspace)
+{
+    create_mapping_pte_return_t ret;
+    lookupPTSlot_ret_t          lu_ret;
+
+    lu_ret = lookupPTSlot(vspace, vaddr);
+    if (lu_ret.status != EXCEPTION_NONE) {
+        current_syscall_error.type = seL4_FailedLookup;
+        current_syscall_error.failedLookupWasSource = false;
+        ret.status = EXCEPTION_SYSCALL_ERROR;
+        /* current_lookup_fault will have been set by lookupPTSlot */
+        return ret;
+    }
+
+    ret.pte = makeUserPTE(base, attr, vmRights);
+    ret.ptSlot = lu_ret.ptSlot;
+    ret.status = EXCEPTION_NONE;
+    return ret;
+}
+
+struct create_mapping_pde_return {
+    exception_t status;
+    pde_t pde;
+    pde_t *pdSlot;
+};
+typedef struct create_mapping_pde_return create_mapping_pde_return_t;
+
+static create_mapping_pde_return_t createSafeMappingEntries_PDE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
+                                                                vm_attributes_t attr,
+                                                                vspace_root_t *vspace)
+{
+    create_mapping_pde_return_t ret;
+    lookupPDSlot_ret_t          lu_ret;
+
+    lu_ret = lookupPDSlot(vspace, vaddr);
+    if (lu_ret.status != EXCEPTION_NONE) {
+        current_syscall_error.type = seL4_FailedLookup;
+        current_syscall_error.failedLookupWasSource = false;
+        ret.status = EXCEPTION_SYSCALL_ERROR;
+        /* current_lookup_fault will have been set by lookupPDSlot */
+        return ret;
+    }
+    ret.pdSlot = lu_ret.pdSlot;
+
+    /* check for existing page table */
+    if ((pde_ptr_get_page_size(ret.pdSlot) == pde_pde_pt) &&
+        (pde_pde_pt_ptr_get_present(ret.pdSlot))) {
+        current_syscall_error.type = seL4_DeleteFirst;
+        ret.status = EXCEPTION_SYSCALL_ERROR;
+        return ret;
+    }
+
+
+    ret.pde = makeUserPDELargePage(base, attr, vmRights);
+    ret.status = EXCEPTION_NONE;
+    return ret;
+}
+
+static int performPML4InvocationProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
+    vptr_t curr_vaddr = base_vaddr;
+    int num = 0;
+    vm_rights_t vm_rights;
+
+    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+        lookupPTSlot_ret_t ptSlot = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+        if (ptSlot.status == EXCEPTION_NONE && pte_ptr_get_present(ptSlot.ptSlot)) {
+            /* TODO: Check this more elegantly */
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromSuperUserWriteable(pte_ptr_get_super_user(ptSlot.ptSlot),
+                                                                        pte_ptr_get_read_write(ptSlot.ptSlot)), rights);
+                pte_ptr_set_super_user(ptSlot.ptSlot, SuperUserFromVMRights(vm_rights));
+                pte_ptr_set_read_write(ptSlot.ptSlot, WritableFromVMRights(vm_rights));
+            } else {
+                *(ptSlot.ptSlot) = makeUserPTEInvalid();
+            }
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(X86_SmallPage));
+            continue;
+        }
+
+        lookupPDSlot_ret_t pdSlot = lookupPDSlot(vspaceRoot, curr_vaddr);
+
+        /* If a large page is mapped for this vaddr */
+        if (pdSlot.status == EXCEPTION_NONE && pde_pde_large_ptr_get_present(pdSlot.pdSlot)) {
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromSuperUserWriteable(pde_pde_large_ptr_get_super_user(pdSlot.pdSlot),
+                                                        pde_pde_large_ptr_get_read_write(pdSlot.pdSlot)), rights);
+                pde_pde_large_ptr_set_super_user(pdSlot.pdSlot, SuperUserFromVMRights(vm_rights));
+                pde_pde_large_ptr_set_read_write(pdSlot.pdSlot, WritableFromVMRights(vm_rights));
+            } else {
+                *(pdSlot.pdSlot) = makeUserPDEInvalid();
+            }
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(X86_LargePage));
+            continue;
+            /* If there is a page table mapped for curr_vaddr move to the next pte */
+        } else if (pdSlot.status == EXCEPTION_NONE && pde_pde_pt_ptr_get_present(pdSlot.pdSlot)) {
+            curr_vaddr += (1 << pageBitsForSize(X86_SmallPage));
+            continue;
+        }
+
+       /* Check pude for curr_vaddr*/
+        lookupPDPTSlot_ret_t PDPTSlot = lookupPDPTSlot(vspaceRoot, curr_vaddr);
+
+        /* If a large page is mapped for this vaddr */
+        if (config_set(CONFIG_HUGE_PAGE) && PDPTSlot.status == EXCEPTION_NONE && pdpte_pdpte_1g_ptr_get_present(PDPTSlot.pdptSlot)) {
+            if (rights.words[0] != 15) {
+                vm_rights = maskVMRights(VMRightsfromSuperUserWriteable(pdpte_pdpte_1g_ptr_get_super_user(PDPTSlot.pdptSlot),
+                                         pdpte_pdpte_1g_ptr_get_read_write(PDPTSlot.pdptSlot)), rights);
+                pdpte_pdpte_1g_ptr_set_super_user(PDPTSlot.pdptSlot, SuperUserFromVMRights(vm_rights));
+                pdpte_pdpte_1g_ptr_set_read_write(PDPTSlot.pdptSlot, WritableFromVMRights(vm_rights));
+            } else {
+                *(PDPTSlot.pdptSlot) = makeUserPDPTEInvalid();
+            }
+            num++;
+            curr_vaddr += (1 << pageBitsForSize(X64_HugePage));
+            continue;
+            /* If there is a PD mapped for this vaddr range move to the next pde */
+        } else if (PDPTSlot.status == EXCEPTION_NONE && pdpte_pdpte_pd_ptr_get_present(PDPTSlot.pdptSlot)) {
+            curr_vaddr += (1 << pageBitsForSize(X86_LargePage)) - (curr_vaddr % (1 << pageBitsForSize(X86_LargePage)));
+            continue;
+        }
+
+        curr_vaddr += (1 << pageBitsForSize(X64_HugePage)) - (curr_vaddr % (1 << pageBitsForSize(X64_HugePage)));
+    }
+
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
+
+    return num;
+}
+
+static exception_t decodeX64PML4Invocation(
+    word_t  label,
+    word_t length,
+    cte_t   *cte,
+    cap_t   cap,
+    word_t  *buffer)
+{
+    if (label == X64PML4RangeProtect) {
+        asid_t asid;
+        vptr_t base_vaddr, end_vaddr;
+        findVSpaceForASID_ret_t find_ret;
+        vspace_root_t *vspace;
+
+
+        if (length < 3) {
+            userError("X86PML4: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        base_vaddr = getSyscallArg(0, buffer);
+        end_vaddr = getSyscallArg(1, buffer);
+        seL4_CapRights_t rights = rightsFromWord(getSyscallArg(2, buffer));
+
+        if (!isValidNativeRoot(cap)) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vspace = (vspace_root_t *)pptr_of_cap(cap);
+        asid = cap_get_capMappedASID(cap);
+
+        find_ret = findVSpaceForASID(asid);
+        if (find_ret.status != EXCEPTION_NONE) {
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (find_ret.vspace_root != vspace) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+         if (unlikely(!checkVPAlignment(X86_SmallPage, base_vaddr)) && unlikely(!checkVPAlignment(X86_LargePage, base_vaddr))
+             && unlikely(config_set(CONFIG_HUGE_PAGE) && !checkVPAlignment(X86_LargePage, base_vaddr))) {
+             userError("X86PML4: Start vaddr is not page aligned");
+             current_syscall_error.type = seL4_AlignmentError;
+             return EXCEPTION_SYSCALL_ERROR;
+         }
+
+
+         if (unlikely(!checkVPAlignment(X86_SmallPage, end_vaddr)) && unlikely(!checkVPAlignment(X86_LargePage, end_vaddr))
+             && unlikely(config_set(CONFIG_HUGE_PAGE) && !checkVPAlignment(X86_LargePage, end_vaddr))) {
+             userError("X86PML4: End vaddr is not page aligned");
+             current_syscall_error.type = seL4_AlignmentError;
+             return EXCEPTION_SYSCALL_ERROR;
+         }
+
+        if (base_vaddr > end_vaddr) {
+            userError("X86PML4: End of the range must be after the start of the range.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /*TODO: Might need a vtop thing */
+        if (end_vaddr > USER_TOP) {
+            userError("X86PML4: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (performPML4InvocationProtect(vspace, base_vaddr, end_vaddr, rights)) {
+            invalidatePageStructureCacheASID(pptr_to_paddr(vspace), asid, SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
+
+    if (label == X64PML4PageMap) {
+        word_t          vaddr;
+        word_t          vtop;
+        word_t          w_rightsMask;
+        paddr_t         paddr;
+        vspace_root_t  *vspace;
+        vm_rights_t     capVMRights;
+        vm_rights_t     vmRights;
+        vm_attributes_t vmAttr;
+        vm_page_size_t  frameSize;
+        asid_t          asid;
+
+        if (length < 3 || current_extra_caps.excaprefs[0] == NULL) {
+            current_syscall_error.type = seL4_TruncatedMessage;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        cte_t *frame_cte = current_extra_caps.excaprefs[0];
+        cap_t frameCap = frame_cte->cap;
+        frameSize = cap_frame_cap_get_capFSize(frameCap);
+
+        vaddr = getSyscallArg(0, buffer);
+        w_rightsMask = getSyscallArg(1, buffer);
+        vmAttr = vmAttributesFromWord(getSyscallArg(2, buffer));
+        capVMRights = cap_frame_cap_get_capFVMRights(frameCap);
+
+        if (!isValidNativeRoot(cap)) {
+            userError("X86FrameMap: Attempting to map frame into invalid page directory cap.");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vspace = (vspace_root_t *)pptr_of_cap(cap);
+        asid = cap_get_capMappedASID(cap);
+
+        asid_t frame_asid = cap_frame_cap_get_capFMappedASID(frameCap);
+        vspace_root_t *frame_vspace = vspace;
+
+        if (frame_asid != asidInvalid) {
+            if (frame_asid != asid) {
+                findVSpaceForASID_ret_t find_ret = findVSpaceForASID(frame_asid);
+                if (likely(find_ret.status == EXCEPTION_NONE)) {
+                    frame_vspace = find_ret.vspace_root;
+                } else {
+                    frame_asid = asidInvalid;
+                }
+            }
+
+            if (cap_frame_cap_get_capFMapType(frameCap) != X86_MappingVSpace) {
+                userError("X86Frame: Attempting to remap frame with different mapping type");
+                current_syscall_error.type = seL4_IllegalOperation;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        } else {
+            vtop = vaddr + BIT(pageBitsForSize(frameSize));
+
+            /* check vaddr and vtop against USER_TOP to catch case where vaddr + frame_size wrapped around */
+            if (vaddr > USER_TOP || vtop > USER_TOP) {
+                userError("X86Frame: Mapping address too high.");
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        {
+            findVSpaceForASID_ret_t find_ret;
+
+            find_ret = findVSpaceForASID(asid);
+            if (find_ret.status != EXCEPTION_NONE) {
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (find_ret.vspace_root != vspace) {
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 1;
+
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        vmRights = maskVMRights(capVMRights, rightsFromWord(w_rightsMask));
+
+        if (!checkVPAlignment(frameSize, vaddr)) {
+            current_syscall_error.type = seL4_AlignmentError;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        paddr = pptr_to_paddr((void *)cap_frame_cap_get_capFBasePtr(frameCap));
+        frameCap = cap_frame_cap_set_capFMappedASID(frameCap, asid);
+        frameCap = cap_frame_cap_set_capFMapType(frameCap, X86_MappingVSpace);
+
+        switch (frameSize) {
+        /* PTE mappings */
+        case X86_SmallPage: {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lookupPTSlot_ret_t ptSlot = lookupPTSlot(frame_vspace, cap_frame_cap_get_capFMappedAddress(frameCap));
+
+                if (likely(ptSlot.status == EXCEPTION_NONE)) {
+                    /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */
+                    if (pte_ptr_get_page_base_address(ptSlot.ptSlot) == paddr) {
+                        userError("Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1;
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            frameCap = cap_frame_cap_set_capFMappedAddress(frameCap, vaddr);
+
+            create_mapping_pte_return_t map_ret;
+
+            map_ret = createSafeMappingEntries_PTE(paddr, vaddr, vmRights, vmAttr, vspace);
+            if (map_ret.status != EXCEPTION_NONE) {
+                return map_ret.status;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performX86PageInvocationMapPTE(frameCap, frame_cte, map_ret.ptSlot, map_ret.pte, vspace);
+        }
+
+        /* PDE mappings */
+        case X86_LargePage: {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+                lookupPDSlot_ret_t pdSlot = lookupPDSlot(frame_vspace, cap_frame_cap_get_capFMappedAddress(frameCap));
+
+                if (likely(pdSlot.status == EXCEPTION_NONE)) {
+                    /* If the frame is currently in use for a mapping, don't remap it - user should explicitly unmap first */
+                    if (pde_pde_large_ptr_get_page_base_address(pdSlot.pdSlot) == paddr) {
+                        userError("Attempting to remap an in-use frame to a different virtual address");
+                        current_syscall_error.type = seL4_InvalidArgument;
+                        current_syscall_error.invalidArgumentNumber = 1;
+                        return EXCEPTION_SYSCALL_ERROR;
+                    }
+                }
+            }
+
+            frameCap = cap_frame_cap_set_capFMappedAddress(frameCap, vaddr);
+
+            create_mapping_pde_return_t map_ret;
+
+            map_ret = createSafeMappingEntries_PDE(paddr, vaddr, vmRights, vmAttr, vspace);
+            if (map_ret.status != EXCEPTION_NONE) {
+                return map_ret.status;
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return performX86PageInvocationMapPDE(frameCap, frame_cte, map_ret.pdSlot, map_ret.pde, vspace);
+        }
+
+        default: {
+            return decodeX86ModeMapPageAlt(label, frameSize, frame_cte, frameCap, vspace, vaddr, paddr, vmRights, vmAttr,
+                                           asid, frame_asid, frame_vspace);
+        }
+        }
+
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    userError("X86PML4: Illegal operation.");
+    current_syscall_error.type = seL4_IllegalOperation;
+    return EXCEPTION_SYSCALL_ERROR;
+
+}
+
 static exception_t decodeX64PDPTInvocation(
     word_t  label,
     word_t length,
@@ -1413,6 +1939,7 @@ exception_t decodeX86ModeMMUInvocation(
     switch (cap_get_capType(cap)) {
 
     case cap_pml4_cap:
+        return decodeX64PML4Invocation(label, length, cte, cap, buffer);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
 
@@ -1450,57 +1977,6 @@ bool_t modeUnmapPage(vm_page_size_t page_size, vspace_root_t *vroot, vptr_t vadd
     }
     fail("Invalid page type");
     return false;
-}
-
-static exception_t updatePDPTE(asid_t asid, pdpte_t pdpte, pdpte_t *pdptSlot, vspace_root_t *vspace)
-{
-    *pdptSlot = pdpte;
-    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), asid,
-                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
-    return EXCEPTION_NONE;
-}
-
-static exception_t performX64ModeMap(cap_t cap, cte_t *ctSlot, pdpte_t pdpte, pdpte_t *pdptSlot, vspace_root_t *vspace)
-{
-    ctSlot->cap = cap;
-    return updatePDPTE(cap_frame_cap_get_capFMappedASID(cap), pdpte, pdptSlot, vspace);
-}
-
-struct create_mapping_pdpte_return {
-    exception_t status;
-    pdpte_t pdpte;
-    pdpte_t *pdptSlot;
-};
-typedef struct create_mapping_pdpte_return create_mapping_pdpte_return_t;
-
-static create_mapping_pdpte_return_t createSafeMappingEntries_PDPTE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
-                                                                    vm_attributes_t attr,
-                                                                    vspace_root_t *vspace)
-{
-    create_mapping_pdpte_return_t ret;
-    lookupPDPTSlot_ret_t          lu_ret;
-
-    lu_ret = lookupPDPTSlot(vspace, vaddr);
-    if (lu_ret.status != EXCEPTION_NONE) {
-        current_syscall_error.type = seL4_FailedLookup;
-        current_syscall_error.failedLookupWasSource = false;
-        ret.status = EXCEPTION_SYSCALL_ERROR;
-        /* current_lookup_fault will have been set by lookupPDSlot */
-        return ret;
-    }
-    ret.pdptSlot = lu_ret.pdptSlot;
-
-    /* check for existing page directory */
-    if ((pdpte_ptr_get_page_size(ret.pdptSlot) == pdpte_pdpte_pd) &&
-        (pdpte_pdpte_pd_ptr_get_present(ret.pdptSlot))) {
-        current_syscall_error.type = seL4_DeleteFirst;
-        ret.status = EXCEPTION_SYSCALL_ERROR;
-        return ret;
-    }
-
-    ret.pdpte = makeUserPDPTEHugePage(base, attr, vmRights);
-    ret.status = EXCEPTION_NONE;
-    return ret;
 }
 
 exception_t decodeX86ModeMapPage(word_t label, vm_page_size_t page_size, cte_t *cte, cap_t cap,

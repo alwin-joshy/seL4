@@ -786,25 +786,25 @@ void unmapPageTable(asid_t asid, vptr_t vaddr, pte_t *pt)
                                      SMP_TERNARY(tlb_bitmap_get(find_ret.vspace_root), 0));
 }
 
-static exception_t performX86PageInvocationMapPTE(cap_t cap, cte_t *ctSlot, pte_t *ptSlot, pte_t pte,
-                                                  vspace_root_t *vspace)
-{
-    ctSlot->cap = cap;
-    *ptSlot = pte;
-    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
-                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
-    return EXCEPTION_NONE;
-}
-
-static exception_t performX86PageInvocationMapPDE(cap_t cap, cte_t *ctSlot, pde_t *pdSlot, pde_t pde,
-                                                  vspace_root_t *vspace)
-{
-    ctSlot->cap = cap;
-    *pdSlot = pde;
-    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
-                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
-    return EXCEPTION_NONE;
-}
+//static exception_t performX86PageInvocationMapPTE(cap_t cap, cte_t *ctSlot, pte_t *ptSlot, pte_t pte,
+//                                                  vspace_root_t *vspace)
+//{
+//    ctSlot->cap = cap;
+//    *ptSlot = pte;
+//    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
+//                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+//    return EXCEPTION_NONE;
+//}
+//
+//static exception_t performX86PageInvocationMapPDE(cap_t cap, cte_t *ctSlot, pde_t *pdSlot, pde_t pde,
+//                                                  vspace_root_t *vspace)
+//{
+//    ctSlot->cap = cap;
+//    *pdSlot = pde;
+//    invalidatePageStructureCacheASID(pptr_to_paddr(vspace), cap_frame_cap_get_capFMappedASID(cap),
+//                                     SMP_TERNARY(tlb_bitmap_get(vspace), 0));
+//    return EXCEPTION_NONE;
+//}
 
 
 static exception_t performX86PageInvocationUnmap(cap_t cap, cte_t *ctSlot)
@@ -853,72 +853,72 @@ static exception_t performX86FrameInvocationUnmap(cap_t cap, cte_t *cte)
     return EXCEPTION_NONE;
 }
 
-struct create_mapping_pte_return {
-    exception_t status;
-    pte_t pte;
-    pte_t *ptSlot;
-};
+//struct create_mapping_pte_return {
+//    exception_t status;
+//    pte_t pte;
+//    pte_t *ptSlot;
+//};
 typedef struct create_mapping_pte_return create_mapping_pte_return_t;
 
-static create_mapping_pte_return_t createSafeMappingEntries_PTE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
-                                                                vm_attributes_t attr,
-                                                                vspace_root_t *vspace)
-{
-    create_mapping_pte_return_t ret;
-    lookupPTSlot_ret_t          lu_ret;
+//static create_mapping_pte_return_t createSafeMappingEntries_PTE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
+//                                                                vm_attributes_t attr,
+//                                                                vspace_root_t *vspace)
+//{
+//    create_mapping_pte_return_t ret;
+//    lookupPTSlot_ret_t          lu_ret;
+//
+//    lu_ret = lookupPTSlot(vspace, vaddr);
+//    if (lu_ret.status != EXCEPTION_NONE) {
+//        current_syscall_error.type = seL4_FailedLookup;
+//        current_syscall_error.failedLookupWasSource = false;
+//        ret.status = EXCEPTION_SYSCALL_ERROR;
+//        /* current_lookup_fault will have been set by lookupPTSlot */
+//        return ret;
+//    }
+//
+//    ret.pte = makeUserPTE(base, attr, vmRights);
+//    ret.ptSlot = lu_ret.ptSlot;
+//    ret.status = EXCEPTION_NONE;
+//    return ret;
+//}
 
-    lu_ret = lookupPTSlot(vspace, vaddr);
-    if (lu_ret.status != EXCEPTION_NONE) {
-        current_syscall_error.type = seL4_FailedLookup;
-        current_syscall_error.failedLookupWasSource = false;
-        ret.status = EXCEPTION_SYSCALL_ERROR;
-        /* current_lookup_fault will have been set by lookupPTSlot */
-        return ret;
-    }
-
-    ret.pte = makeUserPTE(base, attr, vmRights);
-    ret.ptSlot = lu_ret.ptSlot;
-    ret.status = EXCEPTION_NONE;
-    return ret;
-}
-
-struct create_mapping_pde_return {
-    exception_t status;
-    pde_t pde;
-    pde_t *pdSlot;
-};
+//struct create_mapping_pde_return {
+//    exception_t status;
+//    pde_t pde;
+//    pde_t *pdSlot;
+//};
 typedef struct create_mapping_pde_return create_mapping_pde_return_t;
 
-static create_mapping_pde_return_t createSafeMappingEntries_PDE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
-                                                                vm_attributes_t attr,
-                                                                vspace_root_t *vspace)
-{
-    create_mapping_pde_return_t ret;
-    lookupPDSlot_ret_t          lu_ret;
-
-    lu_ret = lookupPDSlot(vspace, vaddr);
-    if (lu_ret.status != EXCEPTION_NONE) {
-        current_syscall_error.type = seL4_FailedLookup;
-        current_syscall_error.failedLookupWasSource = false;
-        ret.status = EXCEPTION_SYSCALL_ERROR;
-        /* current_lookup_fault will have been set by lookupPDSlot */
-        return ret;
-    }
-    ret.pdSlot = lu_ret.pdSlot;
-
-    /* check for existing page table */
-    if ((pde_ptr_get_page_size(ret.pdSlot) == pde_pde_pt) &&
-        (pde_pde_pt_ptr_get_present(ret.pdSlot))) {
-        current_syscall_error.type = seL4_DeleteFirst;
-        ret.status = EXCEPTION_SYSCALL_ERROR;
-        return ret;
-    }
-
-
-    ret.pde = makeUserPDELargePage(base, attr, vmRights);
-    ret.status = EXCEPTION_NONE;
-    return ret;
-}
+//static create_mapping_pde_return_t createSafeMappingEntries_PDE(paddr_t base, word_t vaddr, vm_rights_t vmRights,
+//                                                                vm_attributes_t attr,
+//                                                                vspace_root_t *vspace)
+//{
+//    create_mapping_pde_return_t ret;
+//    lookupPDSlot_ret_t          lu_ret;
+//
+//    lu_ret = lookupPDSlot(vspace, vaddr);
+//    if (lu_ret.status != EXCEPTION_NONE) {
+//        current_syscall_error.type = seL4_FailedLookup;
+//        current_syscall_error.failedLookupWasSource = false;
+//        ret.status = EXCEPTION_SYSCALL_ERROR;
+//        /* current_lookup_fault will have been set by lookupPDSlot */
+//        return ret;
+//    }
+//    ret.pdSlot = lu_ret.pdSlot;
+//
+//    /* check for existing page table */
+//    if ((pde_ptr_get_page_size(ret.pdSlot) == pde_pde_pt) &&
+//        (pde_pde_pt_ptr_get_present(ret.pdSlot))) {
+//        current_syscall_error.type = seL4_DeleteFirst;
+//        ret.status = EXCEPTION_SYSCALL_ERROR;
+//        return ret;
+//    }
+//
+//
+//    ret.pde = makeUserPDELargePage(base, attr, vmRights);
+//    ret.status = EXCEPTION_NONE;
+//    return ret;
+//}
 
 
 exception_t decodeX86FrameInvocation(

@@ -1775,7 +1775,7 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
         /* Check pude for curr_vaddr*/
         lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, curr_vaddr);
 
-        /* If a large page is mapped for this vaddr */
+        /* If a huge page is mapped for this vaddr */
         if (lu_ret_pud.status == EXCEPTION_NONE && pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot)) {
             /* If the end_vaddr is somewhere inside the huge page*/
 //            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
@@ -1992,7 +1992,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             lookupPTSlot_ret_t lu_ret;
 
             // If the current address that is mapped by the frame is not the desired address
-            if (frame_asid != asidInvalid && cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asid_invalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 lu_ret = lookupPTSlot(frameRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 /* This failing just means that the page table structures required for the old mapping are no longer present, meaning that the 
@@ -2026,7 +2026,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         } else if (frameSize == ARMLargePage) {
             lookupPDSlot_ret_t lu_ret; 
 
-            if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asid_invalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 lu_ret = lookupPDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 if (likely(lu_ret.status == EXCEPTION_NONE)) {
@@ -2058,7 +2058,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         } else {
             lookupPUDSlot_ret_t lu_ret;
 
-            if (cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asid_invalid && frame_asid != asid)|| cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
 
                 lu_ret = lookupPUDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
