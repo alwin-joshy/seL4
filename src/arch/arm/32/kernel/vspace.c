@@ -2031,11 +2031,11 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
 
         if (lu_ret_pt.status == EXCEPTION_NONE) {
 
+            int max = PAGES_PER_LARGE_PAGE;
+
             if (pte_ptr_get_pteType(lu_ret_pt.ptSlot) == pte_pte_invalid) {
                 curr_vaddr += max * BIT(pageBitsForSize(ARMSmallPage));
             }
-
-            int max = PAGES_PER_LARGE_PAGE;
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
             if (pte_pte_small_ptr_get_contiguous_hint(lu_ret_pt.ptSlot) == 0) {
@@ -2364,7 +2364,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
                                                map_ret.pte,
                                                map_ret.pte_entries);
         } else {
-            if ((frame_asid != asid_invalid && frame_asid != asid) || generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 pde_t * pdSlot = lookupPDSlot(frame_pd, generic_frame_cap_get_capFMappedAddress(frameCap));
 
                 if (pde_ptr_get_pdeType(pdSlot) == pde_pde_section) {

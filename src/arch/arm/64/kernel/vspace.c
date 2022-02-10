@@ -2026,7 +2026,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         } else if (frameSize == ARMLargePage) {
             lookupPDSlot_ret_t lu_ret; 
 
-            if ((frame_asid != asid_invalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 lu_ret = lookupPDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 if (likely(lu_ret.status == EXCEPTION_NONE)) {
