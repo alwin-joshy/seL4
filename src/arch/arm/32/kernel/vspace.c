@@ -2053,19 +2053,19 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
             ap = APFromVMRights(vm_rights);
 #endif
 
-            for (int i = 0; i < max; i++) {
+            for (int j = 0; j < max; j++) {
                 if (rights.words[0] != 15) {
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-                    pte_pte_small_ptr_set_HAP(&lu_ret_pt.ptSlot[i], ap);
+                    pte_pte_small_ptr_set_HAP(&lu_ret_pt.ptSlot[j], ap);
 #else
                     if (max == 1) {
-                        pte_pte_small_ptr_set_AP(&lu_ret_pt.ptSlot[i], ap);
+                        pte_pte_small_ptr_set_AP(&lu_ret_pt.ptSlot[j], ap);
                     } else {
-                        pte_pte_large_ptr_set_AP(&lu_ret_pt.ptSlot[i], ap);
+                        pte_pte_large_ptr_set_AP(&lu_ret_pt.ptSlot[j], ap);
                     }
 #endif
                 } else {
-                    lu_ret_pt.ptSlot[i] = pte_pte_invalid_new();
+                    lu_ret_pt.ptSlot[j] = pte_pte_invalid_new();
                 }
             }
 
@@ -2107,15 +2107,15 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
 #endif
 
 
-            for (i = 0; i < max; i++) {
+            for (int j = 0; j < max; j++) {
                 if (rights.words[0] != 15) {
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-                    pde_pde_section_ptr_set_HAP(&pd[i], ap);
+                    pde_pde_section_ptr_set_HAP(&pd[j], ap);
 #else
-                    pde_pde_section_ptr_set_AP(&pd[i], ap);
+                    pde_pde_section_ptr_set_AP(&pd[j], ap);
 #endif
                 } else {
-                    pd[i] = pde_pde_invalid_new(0, 0);
+                    pd[j] = pde_pde_invalid_new(0, 0);
                 }
             }
 

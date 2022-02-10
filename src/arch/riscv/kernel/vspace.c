@@ -889,7 +889,7 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
         if (unlikely(frame_asid != asidInvalid)) {
             /* this frame is already mapped */
             if (frame_asid != asid) {
-                findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+                find_ret = findVSpaceForASID(asid);
                 if (likely(find_ret.status == EXCEPTION_NONE)) {
                     frame_pt = find_ret.vspace_root;
                 } else {
