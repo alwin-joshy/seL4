@@ -1781,7 +1781,7 @@ static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base
 //            if (curr_vaddr + (1 << pageBitsForSize(ARMHugePage)) > end_vaddr) {
 //                curr_vaddr = end_vaddr;
 //                break;
-            }
+//            }
 
             if (rights.words[0] != 15) {
                 vm_rights = maskVMRights(VMRightsfromAP(pude_pude_1g_ptr_get_AP(lu_ret_pud.pudSlot)), rights);
@@ -1992,7 +1992,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
             lookupPTSlot_ret_t lu_ret;
 
             // If the current address that is mapped by the frame is not the desired address
-            if ((frame_asid != asid_invalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 lu_ret = lookupPTSlot(frameRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
                 /* This failing just means that the page table structures required for the old mapping are no longer present, meaning that the 

@@ -2041,8 +2041,8 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
             if (pte_pte_small_ptr_get_contiguous_hint(lu_ret_pt.ptSlot) == 0) {
                 max = 1;
             }
-            vm_rights = maskVMRights(VMRightsfromHAP(pte_pte_small_ptr_get_HAP(lu_ret_pt.ptSlot)), rights);
-            ap = HAPFromVMRights(vm_rights)
+            vm_rights = maskVMRights(VMRightsFromHAP(pte_pte_small_ptr_get_HAP(lu_ret_pt.ptSlot)), rights);
+            ap = HAPFromVMRights(vm_rights);
 #else
             if (pte_ptr_get_pteType(lu_ret_pt.ptSlot) == pte_pte_small) {
                 max = 1;
@@ -2087,7 +2087,7 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
         if (pde_ptr_get_pdeType(pd) == pde_pde_section) {
             int max = SECTIONS_PER_SUPER_SECTION;
 
-            if (pde_ptr_get_pdeType(lu_ret_pt.ptSlot) == pde_pde_invalid) {
+            if (pde_ptr_get_pdeType(pd) == pde_pde_invalid) {
                 curr_vaddr += max * BIT(pageBitsForSize(ARMSection));
                 i++;
             }
@@ -2096,8 +2096,8 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
             if (pde_pde_section_ptr_get_contiguous_hint(pd) == 0) {
                 max = 1;
             }
-            vm_rights = maskVMRights(VMRightsfromHAP(pde_pde_section_ptr_get_HAP(pd)), rights);
-            ap = HAPFromVMRights(vm_rights)
+            vm_rights = maskVMRights(VMRightsFromHAP(pde_pde_section_ptr_get_HAP(pd)), rights);
+            ap = HAPFromVMRights(vm_rights);
 #else
             if (pde_pde_section_ptr_get_size(pd) == 0){
                 max = 1;
@@ -2324,7 +2324,7 @@ static exception_t decodeARMPageDirectoryInvocation(word_t invLabel, word_t leng
         capFBasePtr = addrFromPPtr((void *) generic_frame_cap_get_capFBasePtr(frameCap));
 
         if (frameSize == ARMSmallPage || frameSize == ARMLargePage) {
-            if ((frame_asid != asid_invalid && frame_asid != asid) || generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asidInvalid && frame_asid != asid) || generic_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
                 lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(frame_pd, generic_frame_cap_get_capFMappedAddress(frameCap));
                 if (likely(lu_ret_pt.status == EXCEPTION_NONE) && pte_ptr_get_pteType(lu_ret_pt.ptSlot) != pte_pte_invalid) {
                     paddr_t paddr;
