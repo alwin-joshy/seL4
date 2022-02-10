@@ -2025,7 +2025,7 @@ static int performVspaceInvocationProtect(pde_t *base_pd, vptr_t base_vaddr, vpt
     word_t ap;
 
     int i;
-    int num;
+    int num = 0;
     for (i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr;) {
         lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(base_pd, curr_vaddr);
 

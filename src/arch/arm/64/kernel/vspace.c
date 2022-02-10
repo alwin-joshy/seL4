@@ -2058,7 +2058,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         } else {
             lookupPUDSlot_ret_t lu_ret;
 
-            if ((frame_asid != asid_invalid && frame_asid != asid)|| cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
+            if ((frame_asid != asidInvalid && frame_asid != asid)|| cap_frame_cap_get_capFMappedAddress(frameCap) != vaddr) {
 
                 lu_ret = lookupPUDSlot(vspaceRoot, cap_frame_cap_get_capFMappedAddress(frameCap));
 
