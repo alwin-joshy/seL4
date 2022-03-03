@@ -143,6 +143,21 @@ static inline void cancelSignal_fp(tcb_t *tptr, notification_t *ntfnPtr)
     thread_state_ptr_set_tsType_np(&tptr->tcbState, ThreadState_Inactive);
 }
 
+
+static inline void
+notification_ptr_set_ntfnQueue_head_np(notification_t *ntfn_ptr, word_t ntfnQueue_head)
+{
+    ntfn_ptr->words[1] = ntfnQueue_head;
+}
+
+static inline void
+notification_ptr_mset_ntfnQueue_tail_state(notification_t *ntfn_ptr, word_t ntfnQueue_tail,
+                                     word_t state)
+{
+    ntfn_ptr->words[0] = ntfnQueue_tail | state;
+}
+
+
 static inline void cancelIPC_fp(tcb_t *tptr)
 {
     thread_state_t *state = &tptr->tcbState;
