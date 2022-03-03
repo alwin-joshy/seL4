@@ -1721,10 +1721,6 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
-// static void protect_page(uint64_t *word, vm_rights_t vm_rights) {
-//     *word = ((*word & ~(0xc0ull)) | (APFromVMRights(vm_rights) & 0xc0ull))
-// }
-
 
 static int performVspaceInvocationProtect(vspace_root_t *vspaceRoot, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights) {
     vptr_t curr_vaddr = base_vaddr;
