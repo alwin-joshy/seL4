@@ -271,8 +271,7 @@ config_string(
 )
 
 config_string(
-    KernelSignalFastpath SIGNAL_FASTPATH
-    "Enable notification signal fastpath"
+    KernelSignalFastpath SIGNAL_FASTPATH "Enable notification signal fastpath"
     DEFAULT OFF
     DEPENDS "KernelIsMCS" UNDEF_DISABLED
 )

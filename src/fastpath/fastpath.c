@@ -65,107 +65,104 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     /* Get the notification badge */
     word_t badge = cap_notification_cap_get_capNtfnBadge(cap);
     switch (ntfnState) {
-        case NtfnState_Active: {
+    case NtfnState_Active: {
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
-            ksKernelEntry.is_fastpath = true;
+        ksKernelEntry.is_fastpath = true;
 #endif
-            ntfn_set_active(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
-            restore_user_context();
-            UNREACHABLE();
-            break;
-        }
-        case NtfnState_Idle: {
-            /* Check if we are bound and that thread is waiting for a message */
-            if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_BlockedOnReceive) {
-                /* Send and start thread running */
-                maybeDonateSchedContext(dest, ntfnPtr);
-
-               /* We can't just resume the current thread as the default behaviour would be to invoke the scheduler */
-                if (!dest->tcbSchedContext) {
-                    slowpath(SysSend);
-                }
-
-                // Equivalent to cancel_ipc
-                endpoint_t *ep_ptr;
-                ep_ptr = EP_PTR(thread_state_get_blockingObject(dest->tcbState));
-                endpoint_ptr_set_epQueue_head_np(ep_ptr, TCB_REF(dest->tcbEPNext));
-                if (unlikely(dest->tcbEPNext)) {
-                    dest->tcbEPNext->tcbEPPrev = NULL;
-                } else {
-                    endpoint_ptr_mset_epQueue_tail_state(ep_ptr, 0, EPState_Idle);
-                }
-
-                if (NODE_STATE(ksCurThread)->tcbPriority >= dest->tcbPriority) {
-#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
-                    ksKernelEntry.is_fastpath = true;
-#endif
-
-                    setRegister(dest, badgeRegister, badge);
-                    thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
-                    /* continue executing signaller */
-                    tcbSchedEnqueue(dest);
-                    restore_user_context();
-                    UNREACHABLE();
-                }
-#ifdef CONFIG_VTX
-            } else if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_RunningVM) {
-                // TODO
-#endif
-            } else {
-                ntfn_set_active(ntfnPtr, badge);
-                restore_user_context();
-                UNREACHABLE();
-            }
-            break;
-        }
-        case NtfnState_Waiting: {
+        ntfn_set_active(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
+        restore_user_context();
+        UNREACHABLE();
+        break;
+    }
+    case NtfnState_Idle: {
+        /* Check if we are bound and that thread is waiting for a message */
+        if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_BlockedOnReceive) {
+            /* Send and start thread running */
             maybeDonateSchedContext(dest, ntfnPtr);
 
-            /* We can't just resume the current thread as the default behaviour would be to invoke the scheduler */
             if (!dest->tcbSchedContext) {
                 slowpath(SysSend);
             }
 
-            // Anna
-            notification_ptr_set_ntfnQueue_head_np(ntfnPtr, TCB_REF(dest->tcbEPNext));
+            // Equivalent to cancel_ipc
+            endpoint_t *ep_ptr;
+            ep_ptr = EP_PTR(thread_state_get_blockingObject(dest->tcbState));
+            endpoint_ptr_set_epQueue_head_np(ep_ptr, TCB_REF(dest->tcbEPNext));
             if (unlikely(dest->tcbEPNext)) {
                 dest->tcbEPNext->tcbEPPrev = NULL;
             } else {
-                notification_ptr_mset_ntfnQueue_tail_state(ntfnPtr, 0, NtfnState_Idle);
+                endpoint_ptr_mset_epQueue_tail_state(ep_ptr, 0, EPState_Idle);
             }
-
-            // Shane
-//            tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-//            notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
-//
-//            if (unlikely(dest->tcbEPNext)) {
-//                dest->tcbEPNext->tcbEPPrev = NULL;
-//            } else {
-//                notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-//            }
-
-            // Unholy combination
-//            //tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-//            notification_ptr_set_ntfnQueue_head(ntfnPtr, TCB_REF(dest->tcbEPNext));
-//            if (!ntfn_queue.head) {
-//                notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-//            }
-
-
 
             if (NODE_STATE(ksCurThread)->tcbPriority >= dest->tcbPriority) {
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
                 ksKernelEntry.is_fastpath = true;
 #endif
+
                 setRegister(dest, badgeRegister, badge);
                 thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
-                SCHED_ENQUEUE(dest);
+                /* continue executing signaller */
+                tcbSchedEnqueue(dest);
                 restore_user_context();
                 UNREACHABLE();
             }
-            break;
+#ifdef CONFIG_VTX
+        } else if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_RunningVM) {
+            // TODO
+#endif
+        } else {
+            ntfn_set_active(ntfnPtr, badge);
+            restore_user_context();
+            UNREACHABLE();
+        }
+        break;
+    }
+    case NtfnState_Waiting: {
+        maybeDonateSchedContext(dest, ntfnPtr);
+
+        if (!dest->tcbSchedContext) {
+            slowpath(SysSend);
         }
 
+        // Anna
+        notification_ptr_set_ntfnQueue_head_np(ntfnPtr, TCB_REF(dest->tcbEPNext));
+        if (unlikely(dest->tcbEPNext)) {
+            dest->tcbEPNext->tcbEPPrev = NULL;
+        } else {
+            notification_ptr_mset_ntfnQueue_tail_state(ntfnPtr, 0, NtfnState_Idle);
+        }
+
+//       Shane
+//       tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
+//       notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
+//
+//       if (unlikely(dest->tcbEPNext)) {
+//           dest->tcbEPNext->tcbEPPrev = NULL;
+//       } else {
+//           notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
+//       }
+
+//       Unholy combination
+//       tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
+//       notification_ptr_set_ntfnQueue_head(ntfnPtr, TCB_REF(dest->tcbEPNext));
+//       if (!ntfn_queue.head) {
+//           notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
+//       }
+
+
+
+        if (NODE_STATE(ksCurThread)->tcbPriority >= dest->tcbPriority) {
+#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
+            ksKernelEntry.is_fastpath = true;
+#endif
+            setRegister(dest, badgeRegister, badge);
+            thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
+            SCHED_ENQUEUE(dest);
+            restore_user_context();
+            UNREACHABLE();
+        }
+        break;
+    }
     }
 
     /* The only way to get here is if priority of dest is higher than priority of current thread.
@@ -208,7 +205,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
     // TODO: Needed?
     /* Try and wake up threads - this makes everything fail */
-//    awaken();
+    // awaken();
 
     /* Let gcc optimise this out for 1 domain */
     dom = maxDom ? ksCurDomain : 0;
@@ -241,7 +238,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     }
 
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
-ksKernelEntry.is_fastpath = true;
+    ksKernelEntry.is_fastpath = true;
 #endif
 
     thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
@@ -276,7 +273,7 @@ ksKernelEntry.is_fastpath = true;
 //        NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
 //    }
 
-    fastpath_restore(badge, getRegister(NODE_STATE(ksCurThread), msgInfoRegister),NODE_STATE(ksCurThread));
+    fastpath_restore(badge, getRegister(NODE_STATE(ksCurThread), msgInfoRegister), NODE_STATE(ksCurThread));
     UNREACHABLE();
 }
 
