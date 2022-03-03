@@ -28,7 +28,103 @@
         <member name="fs_base"/>
         <member name="gs_base"/>
     </struct>
-
+    <interface name="seL4_X64_PML4" manual_name="PML4">
+        <method id="X64PML4RangeProtect" name="RangeProtect">
+            <brief>
+                TODO
+            </brief>
+            <description>
+                TODO
+            </description>
+            <param dir="in" name="start_vaddr" type="seL4_Word"
+                   description="The starting address of the first page to be considered. Should be page aligned"/>
+            <param dir="in" name="end_vaddr" type="seL4_Word">
+                <description>
+                   The end of the range to consider (non-inclusive). Should be page aligned.
+                </description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                   The minimum protection to protect each page to (if possible). For example <texttt text="seL4_CanRead"/>
+                   will make any read/write pages read only but will not change any pages that are already mapped with <texttt text="seL4_NoRights"/>.
+                   If <texttt text="seL4_AllRights"/> is the provided protection level, this call will unmap the page instead.
+                </description>
+            </param>
+            <param dir="out" name="next_vaddr" type="seL4_Word"
+                   description="The staring address of the page after the one which was last considered "/>
+            <param dir="out" name="num" type="seL4_Uint8"
+                   description="The number of pages which were actually considered in the range (non-empty pages)"/>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+            <description>
+                <texttt text="end_vaddr"/> is before <texttt text="start_vaddr"/>.
+                Or, <texttt text="end_vaddr"/> is beyond than the user addressable region.
+            </description>
+            </error>
+            <error name="seL4_AlignmentError">
+                <description>
+                    <texttt text="start_vaddr"/> or <texttt text="end_vaddr"/> is not page aligned.
+                </description>
+            </error>
+        </method>
+            <method id = "X64PML4PageMap" name = "PageMap">
+            <brief>
+                Map a frame to a virtual address in the provided vspace.
+            </brief>
+            <description>
+                Given a virtual address in the vspace, maps this virtual address to the frame with a given capability.  If the given virtual adress is already mapped to a different
+                frame, this mapping will be overwritten. If <texttt text="frame"/> is already mapped to a page but does not back it, the mapping will be considered stale and
+                overwritten. If the frame capability does back a page, the mapping will not be overwritten and this system call will fail.
+            </description>
+            <param dir="in" name="frame" type="seL4_CPtr"
+                    description="A capability to the frame which is to be used for the mapping"/>
+            <param dir="in" name="vaddr" type="seL4_Word"
+                    description="The virtual address of the start of the page which is to be mapped. Must be page-aligned"/>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                    "Rights for the mapping.<docref>Possible values for this type are given in <autoref label="sec:cap_rights"/>  .</docref>"
+                </description>
+            </param>
+            <param dir="in" name="attr" type="seL4_X86_VMAttributes">
+                <description>
+                    "VM Attributes for the mapping.<docref>Possible values for this type are given in <autoref label="ch:vspace"/>  .</docref>"
+                </description>
+            </param>
+            <error name="seL4_AlignmentError">
+            <description>
+                The <texttt text="vaddr"/> is not aligned to the page size of <texttt text="frame"/>.
+            </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> does not have a paging structure at the required level mapped at <texttt text="vaddr"/>.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+                <description>
+                    The <texttt text="frame"/> is already backing a different page.
+                    Or, <texttt text="vaddr"/> is in the kernel virtual address range.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="frame"/> or <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                    Or, <texttt text="frame"/> is already mapped in a different VSpace.
+                </description>
+            </error>
+        </method>
+    </interface>
     <interface name="seL4_X86_PDPT" manual_name="PDPT">
         <method id="X86PDPTMap" name="Map">
             <description>

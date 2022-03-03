@@ -292,7 +292,7 @@
             </error>
             <error name="seL4_InvalidArgument">
                 <description>
-                    The <texttt text="frame"/> is already backing a different page in <texttt text="_service"/>.
+                    The <texttt text="frame"/> is already backing a different page.
                     Or, <texttt text="vaddr"/> is in the kernel virtual address range.
                 </description>
             </error>

@@ -43,6 +43,115 @@
             <member name="tp"/>
     </struct>
     <interface name="seL4_RISCV_PageTable" manual_name="Page Table" cap_description="Capability to the page table to invoke.">
+        <method id="RISCVPageTableRangeProtect" name="RangeProtect" manual_label="pagetable_rangeprotect">
+            <brief>
+                Unmap or protect a range of pages in this vspace.
+            </brief>
+            <description>
+                Unmap/protect a range of pages in this vspace. This call can only decrease access to pages, not increase.
+                A single invocation will consider at most 32 pages before returning to the caller. It will return the virtual address
+                after the last page which was considered as well as the number of pages which were protected/unmapped.
+            </description>
+            <param dir="in" name="start_vaddr" type="seL4_Word"
+                   description="The starting address of the first page to be considered. Should be page aligned"/>
+            <param dir="in" name="end_vaddr" type="seL4_Word">
+                <description>
+                   The end of the range to consider (non-inclusive). Should be page aligned.
+                </description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                   The minimum protection to protect each page to (if possible). For example <texttt text="seL4_CanRead"/>
+                   will make any read/write pages read only but will not change any pages that are already mapped with <texttt text="seL4_NoRights"/>.
+                   If <texttt text="seL4_AllRights"/> is the provided protection level, this call will unmap the page instead.
+                </description>
+            </param>
+            <param dir="out" name="next_vaddr" type="seL4_Word"
+                   description="The staring address of the page after the one which was last considered "/>
+            <param dir="out" name="num" type="seL4_Uint8"
+                   description="The number of pages which were actually considered in the range (non-empty pages)"/>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+            <description>
+                <texttt text="end_vaddr"/> is before <texttt text="start_vaddr"/>.
+                Or, <texttt text="end_vaddr"/> is beyond than the user addressable region.
+            </description>
+            </error>
+            <error name="seL4_AlignmentError">
+                <description>
+                    <texttt text="start_vaddr"/> or <texttt text="end_vaddr"/> is not page aligned.
+                </description>
+            </error>
+        </method>
+
+        <method id="RISCVPageTablePageMap" name="PageMap">
+            <brief>
+                Map a page into a page table.
+            </brief>
+            <description>
+                Must be invoked on a top-level page table or vspace. Installs a reference to the given
+                <texttt text="Frame"/> in the page table slot corresponding to the given address.
+                If a page is already mapped at the same virtual address, update the mapping attributes.
+                If the required paging structures are not present  this operation will fail, returning a seL4_FailedLookup
+                error.
+            </description>
+            <param dir="in" name="Frame" type="seL4_RISCV_Page">
+                <description>Page to map into the vspace.</description>
+            </param>
+            <param dir="in" name="vaddr" type="seL4_Word">
+                <description>Virtual address at which to map the page.</description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                    Rights for the mapping. <docref>Possible values for this type are given in <autoref label="sec:cap_rights"/>.</docref>
+                </description>
+            </param>
+            <param dir="in" name="attr" type="seL4_RISCV_VMAttributes">
+            <description>
+                VM Attributes for the mapping. <docref>Possible values for this type are given
+                in <autoref label="ch:vspace"/>.</docref>
+            </description>
+            </param>
+            <error name="seL4_AlignmentError">
+                <description>
+                    The <texttt text="vaddr"/> is not aligned to the page size of <texttt text="Page"/>.
+                </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> does not have a paging structure at the required level mapped at <texttt text="vaddr"/>.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+            <error name="seL4_IllegalOperation">
+                <description>
+                    The <texttt text="Frame"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+                <description>
+                    The <texttt text="Frame"/> is already currently allocated to another page.
+                    Or, <texttt text="vaddr"/> is in the kernel virtual address range.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> or <texttt text="Frame"/> is a CPtr to a capability of the wrong type.
+                    Or, <texttt text="_service"/> is not the root of a VSpace.
+                    Or, <texttt text="_service"/> is not assigned to an ASID pool.
+                </description>
+            </error>
+        </method>
+
         <method id="RISCVPageTableMap" name="Map" manual_label="pagetable_map">
             <brief>
                 Map a page table at a specific virtual address.

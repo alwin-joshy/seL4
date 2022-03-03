@@ -27,6 +27,8 @@
 #include <kernel/stack.h>
 #include <util.h>
 
+#define MAX_RANGE 32
+
 struct resolve_ret {
     paddr_t frameBase;
     vm_page_size_t frameSize;
@@ -47,6 +49,16 @@ static inline word_t CONST RISCVGetReadFromVMRights(vm_rights_t vm_rights)
     /* Write-only frame cap rights not currently supported.
      * Kernel-only conveys no user rights. */
     return vm_rights != VMKernelOnly;
+}
+
+static vm_rights_t CONST RISCVGetVMRightsfromReadWrite(word_t read, word_t write) {
+    if (read && write) {
+        return VMReadWrite;
+    } if (read) {
+        return VMReadOnly;
+    } else {
+        return VMKernelOnly;
+    }
 }
 
 static inline bool_t isPTEPageTable(pte_t *pte)
@@ -673,6 +685,36 @@ static inline bool_t CONST checkVPAlignment(vm_page_size_t sz, word_t w)
     return (w & MASK(pageBitsForSize(sz))) == 0;
 }
 
+static bool_t performPageTableInvocationProtect(pte_t *base_pte, vptr_t base_vaddr, vptr_t end_vaddr, seL4_CapRights_t rights_mask) {
+    vm_rights_t old_vm_rights;
+    vptr_t curr_vaddr = base_vaddr;
+    int num = 0;
+
+    for (int i = 0; i < MAX_RANGE && curr_vaddr < end_vaddr; i++) {
+        lookupPTSlot_ret_t lu_ret = lookupPTSlot(base_pte, curr_vaddr);
+
+
+        if (pte_ptr_get_valid(lu_ret.ptSlot)) {
+            if (rights_mask.words[0] != 15) {
+                old_vm_rights = RISCVGetVMRightsfromReadWrite(pte_ptr_get_read(lu_ret.ptSlot), pte_ptr_get_write(lu_ret.ptSlot));
+                vm_rights_t new_vm_rights = maskVMRights(old_vm_rights, rights_mask);
+                pte_ptr_set_read(lu_ret.ptSlot, RISCVGetReadFromVMRights(new_vm_rights));
+                pte_ptr_set_write(lu_ret.ptSlot, RISCVGetWriteFromVMRights(new_vm_rights));
+            } else {
+                *(lu_ret.ptSlot) = pte_pte_invalid_new();
+            }
+            num++;
+        }
+
+        curr_vaddr += BIT(lu_ret.ptBitsLeft);
+    }
+
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, curr_vaddr);
+    setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 1, num);
+
+    return num;
+}
+
 static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
                                                   cte_t *cte, cap_t cap, word_t *buffer)
 {
@@ -697,6 +739,193 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
 
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return performPageTableInvocationUnmap(cap, cte);
+    }
+
+    if (label == RISCVPageTableRangeProtect) {
+
+        if (length < 3) {
+            userError("RISCVPageTableRangeProtect: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vptr_t base_vaddr = getSyscallArg(0, buffer);
+        vptr_t end_vaddr = getSyscallArg(1, buffer);
+        seL4_CapRights_t rights = rightsFromWord(getSyscallArg(2, buffer));
+
+        if (unlikely(cap_get_capType(cap) != cap_page_table_cap ||
+                     cap_page_table_cap_get_capPTIsMapped(cap) == asidInvalid)) {
+
+            userError("RISCVPageTableRangeProtect: Invalid top-level PageTable.");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        pte_t *lvl1pt = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
+        asid_t asid = cap_page_table_cap_get_capPTMappedASID(cap);
+
+        findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("RISCVPageTableRangeProtect: ASID lookup failed");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != lvl1pt)) {
+            userError("RISCVPageTableRangeProtect: ASID lookup failed");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (!checkVPAlignment(RISCV_4K_Page, base_vaddr) && !checkVPAlignment(RISCV_Mega_Page, base_vaddr) &&
+            !checkVPAlignment(RISCV_Giga_Page, base_vaddr) && !checkVPAlignment(RISCV_Tera_Page, base_vaddr)) {
+
+            userError("RISCVPageTableRangeProtect: Start vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (!checkVPAlignment(RISCV_4K_Page, end_vaddr) && !checkVPAlignment(RISCV_Mega_Page, end_vaddr) &&
+            !checkVPAlignment(RISCV_Giga_Page, end_vaddr) && !checkVPAlignment(RISCV_Tera_Page, end_vaddr)) {
+
+            userError("RISCVPageTableRangeProtect: End vaddr is not page aligned");
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (base_vaddr > end_vaddr) {
+            userError("RISCVPageTableRangeProtect: End of the range must be after the start of the range.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (end_vaddr > USER_TOP) {
+            userError("PD Range Protect: Exceed the user addressable region.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (performPageTableInvocationProtect(lvl1pt, base_vaddr, end_vaddr, rights)) {
+            sfence();
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
+
+    if (label == RISCVPageTablePageMap) {
+        if (unlikely(length < 3 || current_extra_caps.excaprefs[0] == NULL)) {
+            userError("RISCVPageTablePageMap: Truncated message.");
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        word_t vaddr = getSyscallArg(0, buffer);
+        word_t w_rightsMask = getSyscallArg(1, buffer);
+        vm_attributes_t attr = vmAttributesFromWord(getSyscallArg(2, buffer));
+        cte_t *frame_cte = current_extra_caps.excaprefs[0];
+        cap_t frameCap = frame_cte->cap;
+
+        vm_page_size_t frameSize = cap_frame_cap_get_capFSize(frameCap);
+        vm_rights_t capVMRights = cap_frame_cap_get_capFVMRights(frameCap);
+
+        if (unlikely(cap_get_capType(cap) != cap_page_table_cap ||
+                     !cap_page_table_cap_get_capPTIsMapped(cap))) {
+            userError("RISCVPageTablePageMap: Bad PageTable cap.");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        pte_t *lvl1pt = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
+        asid_t asid = cap_page_table_cap_get_capPTMappedASID(cap);
+
+        findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("RISCVPageTablePageMap: No PageTable for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != lvl1pt)) {
+            userError("RISCVPageTablePageMap: ASID lookup failed");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* check the vaddr is valid */
+        word_t vtop = vaddr + BIT(pageBitsForSize(frameSize)) - 1;
+        if (unlikely(vtop >= USER_TOP)) {
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+        if (unlikely(!checkVPAlignment(frameSize, vaddr))) {
+            current_syscall_error.type = seL4_AlignmentError;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Check if this page is already mapped */
+        lookupPTSlot_ret_t lu_ret = lookupPTSlot(lvl1pt, vaddr);
+        if (unlikely(lu_ret.ptBitsLeft != pageBitsForSize(frameSize))) {
+            current_lookup_fault = lookup_fault_missing_capability_new(lu_ret.ptBitsLeft);
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        asid_t frame_asid = cap_frame_cap_get_capFMappedASID(frameCap);
+        pte_t *frame_pt = lvl1pt;
+        paddr_t frame_paddr = addrFromPPtr((void *) cap_frame_cap_get_capFBasePtr(frameCap));
+
+        if (unlikely(frame_asid != asidInvalid)) {
+            /* this frame is already mapped */
+            if (frame_asid != asid) {
+                find_ret = findVSpaceForASID(asid);
+                if (likely(find_ret.status == EXCEPTION_NONE)) {
+                    frame_pt = find_ret.vspace_root;
+                } else {
+                    frame_asid = asidInvalid;
+                }
+            }
+
+            word_t mapped_vaddr = cap_frame_cap_get_capFMappedAddress(frameCap);
+            if (frame_asid != asid || mapped_vaddr != vaddr) {
+                lu_ret = lookupPTSlot(frame_pt, mapped_vaddr);
+                if (pte_ptr_get_valid(lu_ret.ptSlot) && (pte_ptr_get_ppn(lu_ret.ptSlot) << seL4_PageTableBits) == frame_paddr) {
+                    userError("RISCVPageTablePageMap: Attempting to remap an in-use frame to a different virtual address");
+                    current_syscall_error.type = seL4_InvalidArgument;
+                    current_syscall_error.invalidArgumentNumber = 1;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            }
+
+            lu_ret = lookupPTSlot(lvl1pt, vaddr);
+            /* this check is redundant, as lookupPTSlot does not stop on a page
+             * table PTE */
+            if (unlikely(isPTEPageTable(lu_ret.ptSlot))) {
+                userError("RISCVPageTablePageMap: no mapping to remap.");
+                current_syscall_error.type = seL4_DeleteFirst;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        vm_rights_t vmRights = maskVMRights(capVMRights, rightsFromWord(w_rightsMask));
+        frameCap = cap_frame_cap_set_capFMappedASID(frameCap, asid);
+        frameCap = cap_frame_cap_set_capFMappedAddress(frameCap,  vaddr);
+
+        bool_t executable = !vm_attributes_get_riscvExecuteNever(attr);
+        pte_t pte = makeUserPTE(frame_paddr, executable, vmRights);
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return performPageInvocationMapPTE(frameCap, frame_cte, pte, lu_ret.ptSlot);
     }
 
     if (unlikely((label != RISCVPageTableMap))) {
@@ -758,7 +987,7 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
     lookupPTSlot_ret_t lu_ret = lookupPTSlot(lvl1pt, vaddr);
 
     /* if there is already something mapped (valid is set) or we have traversed far enough
-     * that a page table is not valid to map then tell the user that they ahve to delete
+     * that a page table is not valid to map then tell the user that they have to delete
      * something before they can put a PT here */
     if (lu_ret.ptBitsLeft == seL4_PageBits || pte_ptr_get_valid(lu_ret.ptSlot)) {
         userError("RISCVPageTableMap: All objects mapped at this address");
