@@ -303,7 +303,8 @@ void awaken(void);
  * of periodic threads waiting for budget recharge */
 void postpone(sched_context_t *sc);
 
-static inline ticks_t getNextInterrupt(void) {
+static inline ticks_t getNextInterrupt(void)
+{
     ticks_t next_interrupt = NODE_STATE(ksCurTime) +
                              REFILL_HEAD(NODE_STATE(ksCurThread)->tcbSchedContext).rAmount;
 
