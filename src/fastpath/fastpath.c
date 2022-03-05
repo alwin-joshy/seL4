@@ -72,7 +72,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         ntfn_set_active(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
         restore_user_context();
         UNREACHABLE();
-        break;
     }
     case NtfnState_Idle: {
         /* Check if we are bound and that thread is waiting for a message */
@@ -108,7 +107,25 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             }
 #ifdef CONFIG_VTX
         } else if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_RunningVM) {
-            // TODO
+            if (tcb->tcbAffinity != getCurrentCPUIndex()) {
+                ntfn_set_active(ntfnPtr, badge);
+                doRemoteVMCheckBoundNotification(tcb->tcbAffinity, tcb);
+                restore_user_context();
+                UNREACHABLE();
+            } else {
+                Arch_leaveVMAsyncTransfer(tcb);
+                if (NODE_STATE(ksCurThread)->tcbPriority >= dest->tcbPriority) {
+#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
+                    ksKernelEntry.is_fastpath = true;
+#endif
+                    setRegister(dest, badgeRegister, badge);
+                    thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
+                    /* continue executing signaller */
+                    tcbSchedEnqueue(dest);
+                    restore_user_context();
+                    UNREACHABLE();
+                }
+            }
 #endif
         } else {
             ntfn_set_active(ntfnPtr, badge);
@@ -131,25 +148,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         } else {
             notification_ptr_mset_ntfnQueue_tail_state(ntfnPtr, 0, NtfnState_Idle);
         }
-
-//       Shane
-//       tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-//       notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
-//
-//       if (unlikely(dest->tcbEPNext)) {
-//           dest->tcbEPNext->tcbEPPrev = NULL;
-//       } else {
-//           notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-//       }
-
-//       Unholy combination
-//       tcb_queue_t ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-//       notification_ptr_set_ntfnQueue_head(ntfnPtr, TCB_REF(dest->tcbEPNext));
-//       if (!ntfn_queue.head) {
-//           notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-//       }
-
-
 
         if (NODE_STATE(ksCurThread)->tcbPriority >= dest->tcbPriority) {
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
