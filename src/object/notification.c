@@ -33,6 +33,28 @@ static inline void ntfn_ptr_set_queue(notification_t *ntfnPtr, tcb_queue_t ntfn_
 }
 
 #ifdef CONFIG_KERNEL_MCS
+static inline void maybeDonateSchedContext(tcb_t *tcb, notification_t *ntfnPtr)
+{
+    if (tcb->tcbSchedContext == NULL) {
+        sched_context_t *sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
+        if (sc != NULL && sc->scTcb == NULL) {
+            schedContext_donate(sc, tcb);
+            if (sc != NODE_STATE(ksCurSC)) {
+                /* refill_unblock_check should not be called on the
+                 * current SC as it is already running. The current SC
+                 * may have been bound to a notificaiton object if the
+                 * current thread was deleted in a long-running deletion
+                 * that became preempted. */
+                refill_unblock_check(sc);
+            }
+            schedContext_resume(sc);
+        }
+    }
+}
+
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 #define MCS_DO_IF_SC(tcb, ntfnPtr, _block) \
     maybeDonateSchedContext(tcb, ntfnPtr); \
     if (isSchedulable(tcb)) { \

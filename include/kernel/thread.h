@@ -307,5 +307,21 @@ void awaken(void);
 /* Place the thread bound to this scheduling context in the release queue
  * of periodic threads waiting for budget recharge */
 void postpone(sched_context_t *sc);
+
+static inline ticks_t getNextInterrupt(void)
+{
+    ticks_t next_interrupt = NODE_STATE(ksCurTime) +
+                             REFILL_HEAD(NODE_STATE(ksCurThread)->tcbSchedContext).rAmount;
+
+    if (CONFIG_NUM_DOMAINS > 1) {
+        next_interrupt = MIN(next_interrupt, NODE_STATE(ksCurTime) + ksDomainTime);
+    }
+
+    if (NODE_STATE(ksReleaseHead) != NULL) {
+        next_interrupt = MIN(REFILL_HEAD(NODE_STATE(ksReleaseHead)->tcbSchedContext).rTime, next_interrupt);
+    }
+
+    return next_interrupt;
+}
 #endif
 
