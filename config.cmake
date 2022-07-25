@@ -287,10 +287,11 @@ config_string(
     UNQUOTE
 )
 
-config_string(
+config_option(
     KernelSignalFastpath SIGNAL_FASTPATH "Enable notification signal fastpath"
     DEFAULT OFF
-    DEPENDS "KernelIsMCS; KernelFastpath" UNDEF_DISABLED
+    DEPENDS "KernelIsMCS; KernelFastpath"
+    DEFAULT_DISABLED OFF
 )
 
 find_file(

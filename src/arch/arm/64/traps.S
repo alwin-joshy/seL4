@@ -202,7 +202,7 @@ lel_syscall:
     b.eq    c_handle_fastpath_call
 #ifdef CONFIG_SIGNAL_FASTPATH
     cmp     x7, #SYSCALL_SEND
-    b.eq     c_handle_fastpath_signal
+    b.eq    c_handle_fastpath_signal
 #endif /* CONFIG_SIGNAL_FASTPATH */
     cmp     x7, #SYSCALL_REPLY_RECV
 #ifdef CONFIG_KERNEL_MCS
