@@ -141,11 +141,16 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
 
             if (!dest->tcbSchedContext) {
-                /* Equivalent to schedContext_donate without TCB migration */
+                /* Equivalent to schedContext_donate without migrateTCB() */
                 sc->scTcb = dest;
                 dest->tcbSchedContext = sc;
             }
             assert(dest->tcbSchedContext);
+
+#ifdef ENABLE_SMP_SUPPORT
+            /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
+            dest->tcbAffinity = sc->scCore;
+#endif
 
             /* Left this in the same form as the slowpath. Not sure if optimal */
             if (sc_sporadic(dest->tcbSchedContext)) {
@@ -260,11 +265,17 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
 
         if (!dest->tcbSchedContext) {
-            /* Equivalent to schedContext_donate without TCB migration */
+            /* Equivalent to schedContext_donate without migrateTCB() */
             sc->scTcb = dest;
             dest->tcbSchedContext = sc;
         }
         assert(dest->tcbSchedContext);
+
+#ifdef ENABLE_SMP_SUPPORT
+        /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
+        dest->tcbAffinity = sc->scCore;
+#endif
+
 
         /* Left this in the same form as the slowpath. Not sure if optimal */
         if (sc_sporadic(dest->tcbSchedContext)) {
