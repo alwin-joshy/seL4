@@ -85,10 +85,12 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                  * slowpath as this saves FPU state in the second case but there should be no reason
                  * to touch the FPU if migration is not required */
 #ifdef ENABLE_SMP_SUPPORT
-                if (nativeThreadUsingFPU(dest) && dest->tcbAffinity != sc->scCore) {
+#ifdef CONFIG_HAVE_FPU
+                if (nativeThreadUsingFPU(dest)) {
                     slowpath(SysSend);
                     UNREACHABLE();
                 }
+#endif
 #endif
             } else {
                 sc = dest->tcbSchedContext;
@@ -176,13 +178,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 }
             }
 
-// #ifdef ENABLE_SMP_SUPPORT
-//             /* Should not be required for this path. Only if we allow signal to
-//              * higher prio in multicore case. */
-//             doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
-//             ARCH_NODE_STATE(ipiReschedulePending) = 0;
-// #endif /* ENABLE_SMP_SUPPORT */
-
             restore_user_context();
             UNREACHABLE();
         } else {
@@ -214,10 +209,12 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
              * slowpath as this saves FPU state in the second case but there should be no reason
              * to touch the FPU if migration is not required */
 #ifdef ENABLE_SMP_SUPPORT
-            if (nativeThreadUsingFPU(dest) && dest->tcbAffinity != sc->scCore) {
+#ifdef CONFIG_HAVE_FPU
+            if (nativeThreadUsingFPU(dest)) {
                 slowpath(SysSend);
                 UNREACHABLE();
             }
+#endif
 #endif
         } else {
             sc = dest->tcbSchedContext;
@@ -304,13 +301,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 SCHED_APPEND(dest);
             }
         }
-
-// #ifdef ENABLE_SMP_SUPPORT
-//         /* Should not be required for this path. Only if we allow signal to
-//          * higher prio in multicore case. */
-//         doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
-//         ARCH_NODE_STATE(ipiReschedulePending) = 0;
-// #endif /* ENABLE_SMP_SUPPORT */
 
         restore_user_context();
         UNREACHABLE();
