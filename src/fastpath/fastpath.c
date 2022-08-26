@@ -22,6 +22,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     word_t fault_type;
     sched_context_t *sc = NULL;
     bool_t schedulable = false;
+    bool_t crossnode = false;
 
     /* Get fault type. */
     fault_type = seL4_Fault_get_seL4_FaultType(NODE_STATE(ksCurThread)->tcbFault);
@@ -112,6 +113,10 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 schedulable = true;
             }
 
+            if (ksCurDomain != dest->tcbDomain SMP_COND_STATEMENT( || sc->scCore != getCurrentCPUIndex())) {
+                crossnode = true;
+            }
+
             /*  Point of no return */
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
@@ -164,22 +169,19 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
              * the slowpath doesn't seem to do anything special besides just not
              * not scheduling the dest thread. */
             if (schedulable) {
-                if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
+                if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                     SCHED_ENQUEUE(dest);
                 } else {
-                    /* This behaviour isn't quite matching with the slowpath,
-                     * as a thread on a different CPU is always enqueued regardless
-                     * of priority */
                     SCHED_APPEND(dest);
                 }
             }
 
-#ifdef ENABLE_SMP_SUPPORT
-            /* Should not be required for this path. Only if we allow signal to
-             * higher prio in multicore case. */
-            doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
-            ARCH_NODE_STATE(ipiReschedulePending) = 0;
-#endif /* ENABLE_SMP_SUPPORT */
+// #ifdef ENABLE_SMP_SUPPORT
+//             /* Should not be required for this path. Only if we allow signal to
+//              * higher prio in multicore case. */
+//             doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+//             ARCH_NODE_STATE(ipiReschedulePending) = 0;
+// #endif /* ENABLE_SMP_SUPPORT */
 
             restore_user_context();
             UNREACHABLE();
@@ -241,6 +243,10 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             schedulable = true;
         }
 
+        if (ksCurDomain != dest->tcbDomain SMP_COND_STATEMENT( || sc->scCore != getCurrentCPUIndex())) {
+            crossnode = true;
+        }
+
         /*  Point of no return */
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
         ksKernelEntry.is_fastpath = true;
@@ -289,7 +295,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
          * the slowpath doesn't seem to do anything special besides just not
          * not scheduling the dest thread. */
         if (schedulable) {
-            if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
+            if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                 SCHED_ENQUEUE(dest);
             } else {
                 /* This behaviour isn't quite matching with the slowpath,
@@ -299,12 +305,12 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             }
         }
 
-#ifdef ENABLE_SMP_SUPPORT
-        /* Should not be required for this path. Only if we allow signal to
-         * higher prio in multicore case. */
-        doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
-        ARCH_NODE_STATE(ipiReschedulePending) = 0;
-#endif /* ENABLE_SMP_SUPPORT */
+// #ifdef ENABLE_SMP_SUPPORT
+//         /* Should not be required for this path. Only if we allow signal to
+//          * higher prio in multicore case. */
+//         doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+//         ARCH_NODE_STATE(ipiReschedulePending) = 0;
+// #endif /* ENABLE_SMP_SUPPORT */
 
         restore_user_context();
         UNREACHABLE();
