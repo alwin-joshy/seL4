@@ -21,10 +21,18 @@
 #include <machine/registerset.h>
 #include <linker.h>
 
+#define RGRANT_TEST
+#ifndef RGRANT_TEST
 static seL4_MessageInfo_t
 transferCaps(seL4_MessageInfo_t info,
              endpoint_t *endpoint, tcb_t *receiver,
              word_t *receiveBuffer);
+#else
+static seL4_MessageInfo_t
+transferCaps(seL4_MessageInfo_t info,
+             endpoint_t *endpoint, tcb_t *receiver,
+             word_t *receiveBuffer, bool_t canGrant);
+#endif
 
 BOOT_CODE void configureIdleThread(tcb_t *tcb)
 {
@@ -205,6 +213,7 @@ void doNormalTransfer(tcb_t *sender, word_t *sendBuffer, endpoint_t *endpoint,
 
     tag = messageInfoFromWord(getRegister(sender, msgInfoRegister));
 
+#ifndef RGRANT_TEST
     if (canGrant) {
         status = lookupExtraCaps(sender, sendBuffer, tag);
         if (unlikely(status != EXCEPTION_NONE)) {
@@ -213,12 +222,19 @@ void doNormalTransfer(tcb_t *sender, word_t *sendBuffer, endpoint_t *endpoint,
     } else {
         current_extra_caps.excaprefs[0] = NULL;
     }
-
+#else
+    status = lookupExtraCaps(sender, sendBuffer, tag);
+    if (unlikely(status != EXCEPTION_NONE)) {
+        current_extra_caps.excaprefs[0] = NULL;
+    }
+#endif
     msgTransferred = copyMRs(sender, sendBuffer, receiver, receiveBuffer,
                              seL4_MessageInfo_get_length(tag));
-
+#ifndef RGRANT_TEST
     tag = transferCaps(tag, endpoint, receiver, receiveBuffer);
-
+#else
+    tag = transferCaps(tag, endpoint, receiver, receiveBuffer, canGrant);
+#endif
     tag = seL4_MessageInfo_set_length(tag, msgTransferred);
     setRegister(receiver, msgInfoRegister, wordFromMessageInfo(tag));
     setRegister(receiver, badgeRegister, badge);
@@ -238,9 +254,16 @@ void doFaultTransfer(word_t badge, tcb_t *sender, tcb_t *receiver,
 }
 
 /* Like getReceiveSlots, this is specialised for single-cap transfer. */
+#ifndef RGRANT_TEST
 static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
                                        endpoint_t *endpoint, tcb_t *receiver,
                                        word_t *receiveBuffer)
+#else
+    static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
+                                           endpoint_t *endpoint, tcb_t *receiver,
+                                           word_t *receiveBuffer,
+                                           bool_t canGrant)
+#endif
 {
     word_t i;
     cte_t *destSlot;
@@ -259,7 +282,17 @@ static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
         cap_t cap = slot->cap;
 
         if (cap_get_capType(cap) == cap_endpoint_cap &&
+#ifndef RGRANT_TEST
             EP_PTR(cap_endpoint_cap_get_capEPPtr(cap)) == endpoint) {
+#else
+            EP_PTR(cap_endpoint_cap_get_capEPPtr(cap)) == endpoint &&
+                (canGrant ||
+                 (! (cap_endpoint_cap_get_capCanGrantReply(cap) ||
+                     cap_endpoint_cap_get_capCanGrant(cap) ||
+                     cap_endpoint_cap_get_capCanReceive(cap) ||
+                     cap_endpoint_cap_get_capCanSend(cap))))
+                ) {
+#endif
             /* If this is a cap to the endpoint on which the message was sent,
              * only transfer the badge, not the cap. */
             setExtraBadge(receiveBuffer,
@@ -270,7 +303,10 @@ static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
 
         } else {
             deriveCap_ret_t dc_ret;
-
+            if (!canGrant) {
+                break;
+            }
+            
             if (!destSlot) {
                 break;
             }
