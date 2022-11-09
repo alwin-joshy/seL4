@@ -303,9 +303,20 @@ static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
 
         } else {
             deriveCap_ret_t dc_ret;
-            if (!canGrant) {
+
+#ifdef RGRANT_TEST
+            if (! (canGrant ||
+                   (cap_get_capType(cap) == cap_endpoint_cap &&
+                    ( ! (cap_endpoint_cap_get_capCanGrantReply(cap) ||
+                         cap_endpoint_cap_get_capCanGrant(cap) ||
+                         cap_endpoint_cap_get_capCanReceive(cap) ||
+                         cap_endpoint_cap_get_capCanSend(cap)))
+                    )
+                   )
+                ) {
                 break;
             }
+#endif
             
             if (!destSlot) {
                 break;
