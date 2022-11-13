@@ -54,6 +54,27 @@ static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, pte_t *vroot, p
     NODE_STATE(ksCurThread) = thread;
 }
 
+static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+    word_t addr;
+
+    addr = read_stval();
+
+    switch (type) {
+    case RISCVLoadPageFault:
+    case RISCVLoadAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
+        break;
+    case RISCVStorePageFault:
+    case RISCVStoreAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
+        break;
+    case RISCVInstructionPageFault:
+    case RISCVInstructionAccessFault:
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
+        break;
+    }
+}
+
 static inline void mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
     mdb_node_t *node_ptr, word_t mdbNext,
     word_t mdbRevocable, word_t mdbFirstBadged)

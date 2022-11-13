@@ -67,6 +67,24 @@ static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, vspace_root_t *
     NODE_STATE(ksCurThread) = thread;
 }
 
+static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+    word_t addr;
+    uint32_t fault;
+
+    addr = getFaultAddr();
+    fault = getRegister(NODE_STATE(ksCurThread), Error);
+    switch (type) {
+    case X86DataFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+    case X86InstructionFault: {
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
+        break;
+    }
+    }
+}
+
 #ifndef CONFIG_KERNEL_MCS
 static inline void thread_state_ptr_set_blockingIPCDiminish_np(thread_state_t *ts_ptr, word_t dim)
 {

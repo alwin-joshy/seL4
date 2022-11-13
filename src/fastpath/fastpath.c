@@ -93,7 +93,24 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
 #endif
 
 #ifdef CONFIG_ARCH_AARCH64
-    stored_hw_asid.words[0] = cap_vtable_root_get_mappedASID(newVTable);
+    /* Need to test that the ASID is still valid */
+    asid_t asid = cap_vtable_root_get_mappedASID(newVTable);
+    asid_map_t asid_map = findMapForASID(asid);
+    if (unlikely(asid_map_get_type(asid_map) != asid_map_asid_map_vspace ||
+                 VSPACE_PTR(asid_map_asid_map_vspace_get_vspace_root(asid_map)) != cap_pd)) {
+        vm_fault_slowpath(type);
+    }
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+    /* Ensure the vmid is valid. */
+    if (unlikely(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map))) {
+        vm_fault_slowpath(type);
+    }
+
+    /* vmids are the tags used instead of hw_asids in hyp mode */
+    stored_hw_asid.words[0] = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
+#else
+    stored_hw_asid.words[0] = asid;
+#endif
 #endif
 
 #ifdef CONFIG_ARCH_RISCV
@@ -146,127 +163,8 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     }
 #endif /* ENABLE_SMP_SUPPORT */
 
-#ifdef CONFIG_ARCH_AARCH64
-    switch (type) {
-    case ARMDataAbort: {
-        word_t addr, fault;
-
-        addr = getFAR();
-        fault = getDFSR();
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        /* use the IPA */
-        if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
-        }
-#endif
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-        break;
-    }
-
-    case ARMPrefetchAbort: {
-        word_t pc, fault;
-
-        pc = getRestartPC(NODE_STATE(ksCurThread));
-        fault = getIFSR();
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
-        }
-#endif
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
-        break;
-    }
-    }
-#endif
-
-#ifdef CONFIG_ARCH_AARCH32
-    switch (type) {
-    case ARMDataAbort: {
-        word_t addr, fault;
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        addr = getHDFAR();
-        addr = (addressTranslateS1CPR(addr) & ~MASK(PAGE_BITS)) | (addr & MASK(PAGE_BITS));
-        /* MSBs tell us that this was a DataAbort */
-        fault = getHSR() & 0x3ffffff;
-#else
-        addr = getFAR();
-        fault = getDFSR();
-#endif
-
-#ifdef CONFIG_HARDWARE_DEBUG_API
-        if (isDebugFault(fault)) {
-            vm_fault_slowpath(type);
-        }
-#endif
-
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-        break;
-    }
-    case ARMPrefetchAbort: {
-        word_t pc, fault;
-
-        pc = getRestartPC(NODE_STATE(ksCurThread));
-
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        pc = (addressTranslateS1CPR(pc) & ~MASK(PAGE_BITS)) | (pc & MASK(PAGE_BITS));
-        /* MSBs tell us that this was a PrefetchAbort */
-        fault = getHSR() & 0x3ffffff;
-#else
-        fault = getIFSR();
-#endif
-
-#ifdef CONFIG_HARDWARE_DEBUG_API
-        if (isDebugFault(fault)) {
-            vm_fault_slowpath(type);
-        }
-#endif
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
-        break;
-    }
-    }
-#endif
-
-#ifdef CONFIG_ARCH_X86
-    word_t addr;
-    uint32_t fault;
-
-    addr = getFaultAddr();
-    fault = getRegister(NODE_STATE(ksCurThread), Error);
-    switch (type) {
-    case X86DataFault: {
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-        break;
-    }
-    case X86InstructionFault: {
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, true);
-        break;
-    }
-    }
-#endif
-
-#ifdef CONFIG_ARCH_RISCV
-    word_t addr;
-
-    addr = read_stval();
-
-    switch (type) {
-    case RISCVLoadPageFault:
-    case RISCVLoadAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVLoadAccessFault, false);
-        break;
-    case RISCVStorePageFault:
-    case RISCVStoreAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVStoreAccessFault, false);
-        break;
-    case RISCVInstructionPageFault:
-    case RISCVInstructionAccessFault:
-        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, RISCVInstructionAccessFault, true);
-        break;
-    }
-#endif
+    /* This function has one slowpath transition but only for a debug fault on AARCH32 */
+    fastpath_set_tcbfault_vmfault(type);
 
     /*
      * --- POINT OF NO RETURN ---
@@ -321,8 +219,6 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     mdb_node_ptr_set_mdbPrev_np(&callerSlot->cteMDBNode, CTE_REF(replySlot));
     mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(&replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
 #endif
-
-
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     word_t ipa, va;
