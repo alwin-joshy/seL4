@@ -58,6 +58,54 @@ static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, pde_t *cap_pd, 
     clearExMonitor_fp();
 }
 
+static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+    switch (type) {
+    case ARMDataAbort: {
+        word_t addr, fault;
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        addr = getHDFAR();
+        addr = (addressTranslateS1CPR(addr) & ~MASK(PAGE_BITS)) | (addr & MASK(PAGE_BITS));
+        /* MSBs tell us that this was a DataAbort */
+        fault = getHSR() & 0x3ffffff;
+#else
+        addr = getFAR();
+        fault = getDFSR();
+#endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+        if (isDebugFault(fault)) {
+            vm_fault_slowpath(type);
+        }
+#endif
+
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
+        break;
+    }
+    case ARMPrefetchAbort: {
+        word_t pc, fault;
+
+        pc = getRestartPC(NODE_STATE(ksCurThread));
+
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        pc = (addressTranslateS1CPR(pc) & ~MASK(PAGE_BITS)) | (pc & MASK(PAGE_BITS));
+        /* MSBs tell us that this was a PrefetchAbort */
+        fault = getHSR() & 0x3ffffff;
+#else
+        fault = getIFSR();
+#endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+        if (isDebugFault(fault)) {
+            vm_fault_slowpath(type);
+        }
+#endif
+        NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
+        break;
+    }
+    }
+}
+
 #ifndef CONFIG_KERNEL_MCS
 static inline void mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
     mdb_node_t *node_ptr, word_t mdbNext,
