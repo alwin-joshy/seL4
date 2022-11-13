@@ -62,7 +62,7 @@ void VISIBLE NORETURN c_handle_enfp(void)
 }
 #endif /* CONFIG_HAVE_FPU */
 
-inline void NORETURN vm_fault_slowpath(vm_fault_type_t type)
+void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 {
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = 0;
