@@ -66,7 +66,7 @@ void VISIBLE NORETURN c_handle_interrupt(int irq, int syscall)
         ksKernelEntry.word = type;
 #endif
 
-#if defined(CONFIG_EXCEPTION_FASTPATH) && defined(CONFIG_X86_64)
+#if defined(CONFIG_EXCEPTION_FASTPATH)
         fastpath_vm_fault(type);
         UNREACHABLE();
 #else
