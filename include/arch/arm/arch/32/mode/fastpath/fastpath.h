@@ -58,14 +58,15 @@ static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, pde_t *cap_pd, 
     clearExMonitor_fp();
 }
 
-static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+static inline void fastpath_set_tcbfault_vm_fault(vm_fault_type_t type)
+{
     switch (type) {
     case ARMDataAbort: {
         word_t addr, fault;
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
         addr = getHDFAR();
-        addr = (addressTranslateS1CPR(addr) & ~MASK(PAGE_BITS)) | (addr & MASK(PAGE_BITS));
+        addr = (addressTranslateS1(addr) & ~MASK(PAGE_BITS)) | (addr & MASK(PAGE_BITS));
         /* MSBs tell us that this was a DataAbort */
         fault = getHSR() & 0x3ffffff;
 #else
@@ -88,7 +89,7 @@ static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
         pc = getRestartPC(NODE_STATE(ksCurThread));
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-        pc = (addressTranslateS1CPR(pc) & ~MASK(PAGE_BITS)) | (pc & MASK(PAGE_BITS));
+        pc = (addressTranslateS1(pc) & ~MASK(PAGE_BITS)) | (pc & MASK(PAGE_BITS));
         /* MSBs tell us that this was a PrefetchAbort */
         fault = getHSR() & 0x3ffffff;
 #else

@@ -67,7 +67,8 @@ static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, vspace_root_t *
     NODE_STATE(ksCurThread) = thread;
 }
 
-static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+static inline void fastpath_set_tcbfault_vm_fault(vm_fault_type_t type)
+{
     word_t addr;
     uint32_t fault;
 

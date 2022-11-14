@@ -15,7 +15,7 @@
 #endif
 #include <benchmark/benchmark_utilisation.h>
 
-
+#ifdef CONFIG_EXCEPTION_FASTPATH
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
@@ -33,6 +33,7 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     pde_t stored_hw_asid;
     dom_t dom;
 
+    /* Get the fault handler endpoint */
 #ifdef CONFIG_KERNEL_MCS
     handler_cap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbFaultHandler)->cap;
 #else
@@ -163,14 +164,16 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     }
 #endif /* ENABLE_SMP_SUPPORT */
 
-    /* This function has one slowpath transition but only for a debug fault on AARCH32 */
-    fastpath_set_tcbfault_vmfault(type);
-
     /*
      * --- POINT OF NO RETURN ---
      *
      * At this stage, we have committed to performing the IPC.
      */
+
+    /* Sets the tcb fault based on the vm fault information. Has one slowpath transition
+    but only for a debug fault on AARCH32 */
+
+    fastpath_set_tcbfault_vm_fault(type);
 
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = true;
@@ -219,29 +222,20 @@ void NORETURN fastpath_vm_fault(vm_fault_type_t type)
     mdb_node_ptr_set_mdbPrev_np(&callerSlot->cteMDBNode, CTE_REF(replySlot));
     mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(&replySlot->cteMDBNode, CTE_REF(callerSlot), 1, 1);
 #endif
+    /* Set the message registers for the vm fault*/
+    fastpath_vm_fault_set_mrs(dest);
 
-#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
-    word_t ipa, va;
-    va = getRestartPC(NODE_STATE(ksCurThread));
-    ipa = (addressTranslateS1CPR(va) & ~MASK(PAGE_BITS)) | (va & MASK(PAGE_BITS));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, ipa);
-#else
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_IP, getRestartPC(NODE_STATE(ksCurThread)));
-#endif
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_Addr,
-                seL4_Fault_VMFault_get_address(NODE_STATE(ksCurThread)->tcbFault));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_PrefetchFault,
-                seL4_Fault_VMFault_get_instructionFault(NODE_STATE(ksCurThread)->tcbFault));
-    setRegister(dest, msgRegisters[0] + seL4_VMFault_FSR, seL4_Fault_VMFault_get_FSR(NODE_STATE(ksCurThread)->tcbFault));
-
+    /* Generate the msginfo */
     info = seL4_MessageInfo_new(seL4_Fault_VMFault, 0, 0, seL4_VMFault_Length);
 
+    /* Set the fault handler to running */
     thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
     switchToThread_fp(dest, cap_pd, stored_hw_asid);
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
+#endif
 
 #ifdef CONFIG_ARCH_ARM
 static inline
@@ -569,6 +563,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
        reply is generated instead. */
     fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
 
+    /* Change this as more types of faults are supported */
 #ifndef CONFIG_EXCEPTION_FASTPATH
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         slowpath(SysReplyRecv);
@@ -743,29 +738,9 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         bool_t restart = 0;
         switch (fault_type) {
-        case (seL4_Fault_CapFault): {
-            break;
-        }
-        case (seL4_Fault_UnknownSyscall): {
-            break;
-        }
-        case (seL4_Fault_UserException): {
-            break;
-        }
-#ifdef CONFIG_KERNEL_MCS
-        case (seL4_Fault_Timeout): {
-            break;
-        }
-#endif
-
-#ifdef CONFIG_HARDWARE_DEBUG_API
-        case (seL4_Fault_DebugException): {
-            break;
-        }
-#endif
-        default: {
+        /* Add cases for other types of faults here */
+        default:
             restart = 1;
-        }
         }
 
         /* Note - this works as is for VM faults but will need to be changed when other faults are added. This is because
@@ -788,7 +763,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         /* The badge/msginfo do not need to be not sent - this is not necessary for exceptions */
         restore_user_context();
     } else {
-        /* I know there's no fault, so straight to the transfer. */
+        /* There's no fault, so straight to the transfer. */
 
         /* Replies don't have a badge. */
         badge = 0;
@@ -804,7 +779,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
     }
 #else
-    /* I know there's no fault, so straight to the transfer. */
+    /* There's no fault, so straight to the transfer. */
 
     /* Replies don't have a badge. */
     badge = 0;

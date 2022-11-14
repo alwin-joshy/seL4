@@ -45,7 +45,8 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
     NODE_STATE(ksCurThread) = thread;
 }
 
-static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
+static inline void fastpath_set_tcbfault_vm_fault(vm_fault_type_t type)
+{
     switch (type) {
     case ARMDataAbort: {
         word_t addr, fault;
@@ -56,11 +57,11 @@ static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
         /* use the IPA */
         if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            addr = GET_PAR_ADDR(ats1e1r(addr)) | (addr & MASK(PAGE_BITS));
+            addr = GET_PAR_ADDR(addressTranslateS1(addr)) | (addr & MASK(PAGE_BITS));
         }
 #endif
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(addr, fault, false);
-            break;
+        break;
     }
     case ARMPrefetchAbort: {
         word_t pc, fault;
@@ -70,7 +71,7 @@ static inline void fastpath_set_tcbfault_vmfault(vm_fault_type_t type) {
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
         if (ARCH_NODE_STATE(armHSVCPUActive)) {
-            pc = GET_PAR_ADDR(ats1e1r(pc)) | (pc & MASK(PAGE_BITS));
+            pc = GET_PAR_ADDR(addressTranslateS1(pc)) | (pc & MASK(PAGE_BITS));
         }
 #endif
         NODE_STATE(ksCurThread)->tcbFault = seL4_Fault_VMFault_new(pc, fault, true);
