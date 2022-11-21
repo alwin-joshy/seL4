@@ -24,6 +24,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     bool_t schedulable = false;
     bool_t crossnode = false;
 
+
     /* Get fault type. */
     fault_type = seL4_Fault_get_seL4_FaultType(NODE_STATE(ksCurThread)->tcbFault);
 
@@ -96,11 +97,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 sc = dest->tcbSchedContext;
             }
 
-            /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
-            if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
+            /* Signal to higher prio thread on the same core is not fastpathed as it brings in too much scheduler logic */
+            if (SMP_COND_STATEMENT( sc->scCore == getCurrentCPUIndex() && ) NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
                 slowpath(SysSend);
             }
-
+            
             /* Simplified schedContext_resume that does not change state and reverts to the
             * slowpath in cases where the SC does not have sufficient budget, as this case
             * adds extra scheduler logic. Normally, this is done after the sched_context donate
@@ -184,6 +185,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 }
             }
 
+#ifdef ENABLE_SMP_SUPPORT
+            doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+            ARCH_NODE_STATE(ipiReschedulePending) = 0;
+#endif /* ENABLE_SMP_SUPPORT */
+
             restore_user_context();
             UNREACHABLE();
         } else {
@@ -226,11 +232,11 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             sc = dest->tcbSchedContext;
         }
 
-        /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
-        if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
+        /* Signal to higher prio thread on the same core is not fastpathed as it brings in too much scheduler logic */
+        if (SMP_COND_STATEMENT( sc->scCore == getCurrentCPUIndex() && ) NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority) {
             slowpath(SysSend);
         }
-
+        
         /* Simplified schedContext_resume that does not change state and does not depend
          * on state that would otherwise be changed by schedContext_donate in the slowpath.
          * Reverts to theslowpath in cases where the SC does not have sufficient budget, as this case
@@ -291,7 +297,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #endif
 #endif
 
-
         /* Left this in the same form as the slowpath. Not sure if optimal */
         if (sc_sporadic(dest->tcbSchedContext)) {
             assert(dest->tcbSchedContext != NODE_STATE(ksCurSC));
@@ -307,12 +312,14 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                 SCHED_ENQUEUE(dest);
             } else {
-                /* This behaviour isn't quite matching with the slowpath,
-                 * as a thread on a different CPU is always enqueued regardless
-                 * of priority */
                 SCHED_APPEND(dest);
             }
         }
+
+#ifdef ENABLE_SMP_SUPPORT
+        doMaskReschedule(ARCH_NODE_STATE(ipiReschedulePending));
+        ARCH_NODE_STATE(ipiReschedulePending) = 0;
+#endif /* ENABLE_SMP_SUPPORT */
 
         restore_user_context();
         UNREACHABLE();

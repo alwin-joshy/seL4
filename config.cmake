@@ -290,7 +290,7 @@ config_string(
 config_option(
     KernelSignalFastpath SIGNAL_FASTPATH "Enable notification signal fastpath"
     DEFAULT OFF
-    DEPENDS "KernelIsMCS; KernelFastpath; KernelSel4ArchAarch64"
+    DEPENDS "KernelIsMCS; KernelFastpath; KernelSel4ArchAarch64; NOT KernelVerificationBuild"
     DEFAULT_DISABLED OFF
 )
 
