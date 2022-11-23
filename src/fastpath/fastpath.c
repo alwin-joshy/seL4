@@ -68,7 +68,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
         /* Check if we are bound and that thread is waiting for a message */
         if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_BlockedOnReceive) {
-            /* Basically equivalent to maybeDonateSchedContext. Check whether the thread already has
+            /* Checks for maybeDonateSchedContext(). Check whether the thread already has
              * a SC or if one can be donated from the notification. If neither is true, go to
              * slowpath */
             if (!dest->tcbSchedContext) {
@@ -78,12 +78,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                     UNREACHABLE();
                 }
 
-                /* Slowpath FPU saving case. We check that dest either isn't currently using the FPU
-                 * so that we do not have to save its state for migration (lazy FPU) or that it is the
-                 * the thread that is currently using the FPU, but the CPU is the same as that of the
-                 * scheduling context so that tcb migration is not needed. Not exactly the same as the
-                 * slowpath as this saves FPU state in the second case but there should be no reason
-                 * to touch the FPU if migration is not required */
+                /* Slowpath the case where dest has its FPU context in the FPU of a core*/
 #ifdef ENABLE_SMP_SUPPORT
 #ifdef CONFIG_HAVE_FPU
                 if (nativeThreadUsingFPU(dest)) {
@@ -96,18 +91,18 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 sc = dest->tcbSchedContext;
             }
 
-            /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
+            /* Only fastpath signal to threads which will not become the new highest prio thread on the
+             * core of their SC, even if the currently running thread on the core is the idle thread. */
             if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
                 slowpath(SysSend);
             }
 
             /* Simplified schedContext_resume that does not change state and reverts to the
             * slowpath in cases where the SC does not have sufficient budget, as this case
-            * adds extra scheduler logic. Normally, this is done after the sched_context donate
-            * but after tweaking it, I don't immediately see anything executed in schedContext_donate
+            * adds extra scheduler logic. Normally, this is done after donation of SC
+            * but after tweaking it, I don't see anything executed in schedContext_donate
             * that will affect the conditions of this check */
-
-            if (sc->scRefillMax > 0 && !thread_state_get_tcbInReleaseQueue(dest->tcbState)) {
+            if (sc->scRefillMax > 0) {
                 if (!(refill_ready(sc) && refill_sufficient(sc, 0))) {
                     slowpath(SysSend);
                     UNREACHABLE();
@@ -115,6 +110,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 schedulable = true;
             }
 
+            /* Check if signal is cross-core or cross-domain */
             if (ksCurDomain != dest->tcbDomain SMP_COND_STATEMENT( || sc->scCore != getCurrentCPUIndex())) {
                 crossnode = true;
             }
@@ -123,47 +119,16 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
 #endif
+            /* Cancel the IPC that the signalled thread is waiting on */
+            cancelIPC_fp(dest);
 
-            /* Equivalent to cancel_ipc */
-            endpoint_t *ep_ptr;
-            tcb_queue_t queue;
-            ep_ptr = EP_PTR(thread_state_get_blockingObject(dest->tcbState));
-
-            queue = ep_ptr_get_queue(ep_ptr);
-            queue = tcbEPDequeue(dest, queue);
-            ep_ptr_set_queue(ep_ptr, queue);
-
-            if (!queue.head) {
-                endpoint_ptr_set_state(ep_ptr, EPState_Idle);
-            }
-
-            reply_t *reply = REPLY_PTR(thread_state_get_replyObject(dest->tcbState));
-            if (reply != NULL) {
-                reply_unlink(reply, dest);
-            }
-
-            /* Now we donate the SC. The checks required for this were
-             * already done before the point of no return. */
+            /* Unblock up the signalled thread and tranfer badge */
             setRegister(dest, badgeRegister, badge);
             thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
 
-            if (!dest->tcbSchedContext) {
-                /* Equivalent to schedContext_donate without migrateTCB() */
-                sc->scTcb = dest;
-                dest->tcbSchedContext = sc;
-            }
-            assert(dest->tcbSchedContext);
-
-#ifdef ENABLE_SMP_SUPPORT
-#ifdef CONFIG_DEBUG_BUILD
-            tcbDebugRemove(dest);
-#endif
-            /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
-            dest->tcbAffinity = sc->scCore;
-#ifdef CONFIG_DEBUG_BUILD
-            tcbDebugAppend(dest);
-#endif
-#endif
+            /* Donate SC if necessary. The checks for this were already done before
+            * the point of no return */
+            maybeDonateSchedContext_fp(dest, sc);
 
             /* Left this in the same form as the slowpath. Not sure if optimal */
             if (sc_sporadic(dest->tcbSchedContext)) {
@@ -174,7 +139,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             }
 
             /* If dest was already not schedulable prior to the budget check
-             * the slowpath doesn't seem to do anything special besides just not
+             * the slowpath doesn't do anything special besides not
              * not scheduling the dest thread. */
             if (schedulable) {
                 if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
@@ -198,8 +163,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     case NtfnState_Waiting: {
         tcb_t *dest = TCB_PTR(notification_ptr_get_ntfnQueue_head(ntfnPtr));
 
-
-        /* Basically equivalent to maybeDonateSchedContext. Check whether the thread already has
+        /* Checks for maybeDonateSchedContext(). Check whether the thread already has
          * a SC or if one can be donated from the notification. If neither is true, go to
          * slowpath */
         if (!dest->tcbSchedContext) {
@@ -208,12 +172,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 slowpath(SysSend);
             }
 
-            /* Slowpath FPU saving case. We check that dest either isn't currently using the FPU
-             * so that we do not have to save its state for migration (lazy FPU) or that it is the
-             * the thread that is currently using the FPU, but the CPU is the same as that of the
-             * scheduling context so that tcb migration is not needed. Not exactly the same as the
-             * slowpath as this saves FPU state in the second case but there should be no reason
-             * to touch the FPU if migration is not required */
+            /* Slowpath the case where dest has its FPU context in the FPU of a core*/
 #ifdef ENABLE_SMP_SUPPORT
 #ifdef CONFIG_HAVE_FPU
             if (nativeThreadUsingFPU(dest)) {
@@ -226,19 +185,18 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             sc = dest->tcbSchedContext;
         }
 
-        /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
+        /* Only fastpath signal to threads which will not become the new highest prio thread on the
+            core of their SC, even if the currently running thread on the core is the idle thread. */
         if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
             slowpath(SysSend);
         }
 
-        /* Simplified schedContext_resume that does not change state and does not depend
-         * on state that would otherwise be changed by schedContext_donate in the slowpath.
-         * Reverts to theslowpath in cases where the SC does not have sufficient budget, as this case
-         * adds extra scheduler logic. Normally, this is done after the sched_context donate
-         * but after tweaking it, I don't immediately see anything executed in schedContext_donate
+        /* Simplified schedContext_resume that does not change state and reverts to the
+         * slowpath in cases where the SC does not have sufficient budget, as this case
+         * adds extra scheduler logic. Normally, this is done after donation of SC
+         * but after tweaking it, I don't see anything executed in schedContext_donate
          * that will affect the conditions of this check */
-
-        if (sc->scRefillMax > 0 && !thread_state_get_tcbInReleaseQueue(dest->tcbState)) {
+        if (sc->scRefillMax > 0) {
             if (!(refill_ready(sc) && refill_sufficient(sc, 0))) {
                 slowpath(SysSend);
                 UNREACHABLE();
@@ -246,6 +204,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             schedulable = true;
         }
 
+        /* Check if signal is cross-core or cross-domain */
         if (ksCurDomain != dest->tcbDomain SMP_COND_STATEMENT( || sc->scCore != getCurrentCPUIndex())) {
             crossnode = true;
         }
@@ -254,43 +213,16 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
         ksKernelEntry.is_fastpath = true;
 #endif
+        /* Dequeue dest from the notification queue */
+        ntfn_queue_dequeue_fp(dest, ntfnPtr);
 
-        tcb_queue_t ntfn_queue;
-        ntfn_queue.head = (tcb_t *)notification_ptr_get_ntfnQueue_head(ntfnPtr);
-        ntfn_queue.end = (tcb_t *)notification_ptr_get_ntfnQueue_tail(ntfnPtr);
-
-        ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
-
-        notification_ptr_set_ntfnQueue_head(ntfnPtr, (word_t)ntfn_queue.head);
-        notification_ptr_set_ntfnQueue_tail(ntfnPtr, (word_t)ntfn_queue.end);
-
-        if (!ntfn_queue.head) {
-            notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
-        }
-
-        /* Now we donate the SC. The checks required for this were
-         * already done before the point of no return. */
+        /* Wake up the signalled thread and tranfer badge */
         setRegister(dest, badgeRegister, badge);
         thread_state_ptr_set_tsType_np(&dest->tcbState, ThreadState_Running);
 
-        if (!dest->tcbSchedContext) {
-            /* Equivalent to schedContext_donate without migrateTCB() */
-            sc->scTcb = dest;
-            dest->tcbSchedContext = sc;
-        }
-        assert(dest->tcbSchedContext);
-
-#ifdef ENABLE_SMP_SUPPORT
-#ifdef CONFIG_DEBUG_BUILD
-        tcbDebugRemove(dest);
-#endif
-        /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
-        dest->tcbAffinity = sc->scCore;
-#ifdef CONFIG_DEBUG_BUILD
-        tcbDebugAppend(dest);
-#endif
-#endif
-
+        /* Donate SC if necessary. The checks for this were already done before
+         * the point of no return */
+        maybeDonateSchedContext_fp(dest, sc);
 
         /* Left this in the same form as the slowpath. Not sure if optimal */
         if (sc_sporadic(dest->tcbSchedContext)) {
@@ -307,9 +239,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
             if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                 SCHED_ENQUEUE(dest);
             } else {
-                /* This behaviour isn't quite matching with the slowpath,
-                 * as a thread on a different CPU is always enqueued regardless
-                 * of priority */
                 SCHED_APPEND(dest);
             }
         }
