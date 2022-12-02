@@ -594,7 +594,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         break;
     default:
         fail("Invalid notification state");
-        UNREACHABLE();
     }
 
     /* Checks for maybeDonateSchedContext(). Check whether the thread already has
@@ -682,6 +681,5 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     }
 
     restore_user_context();
-    UNREACHABLE();
 }
 #endif
