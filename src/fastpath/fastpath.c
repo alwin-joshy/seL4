@@ -555,6 +555,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         slowpath(SysSend);
     }
 
+    /* Check that the current domain hasn't expired */
     if (unlikely(isCurDomainExpired())) {
         slowpath(SysSend);
     }
