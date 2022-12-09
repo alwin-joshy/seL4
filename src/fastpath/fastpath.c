@@ -597,25 +597,23 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         fail("Invalid notification state");
     }
 
-    /* Checks for maybeDonateSchedContext(). Check whether the thread already has
-    * a SC or if one can be donated from the notification. If neither is true, go to
-    * slowpath */
-    if (!dest->tcbSchedContext) {
+    /* Get the bound SC of the signalled thread */
+    sc = dest->tcbSchedContext;
+
+    /* If the signalled thread doesn't have a bound SC, check if one can be
+     * donated from the notification. If not, go to the slowpath */
+    if (!sc) {
         sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
         if (sc == NULL || sc->scTcb != NULL) {
             slowpath(SysSend);
         }
 
         /* Slowpath the case where dest has its FPU context in the FPU of a core*/
-#ifdef ENABLE_SMP_SUPPORT
-#ifdef CONFIG_HAVE_FPU
+#if defined(ENABLE_SMP_SUPPORT) && defined(CONFIG_HAVE_FPU)
         if (nativeThreadUsingFPU(dest)) {
             slowpath(SysSend);
         }
 #endif
-#endif
-    } else {
-        sc = dest->tcbSchedContext;
     }
 
     /* Only fastpath signal to threads which will not become the new highest prio thread on the
