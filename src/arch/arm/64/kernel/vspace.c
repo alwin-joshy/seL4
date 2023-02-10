@@ -1690,18 +1690,184 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
 {
-    vptr_t start, end;
-    paddr_t pstart;
-    asid_t asid;
-    vspace_root_t *vspaceRoot;
-    lookupFrame_ret_t resolve_ret;
-    findVSpaceForASID_ret_t find_ret;
-
     switch (invLabel) {
+    case ARMVspaceRemap_Range: {
+        seL4_CPtr start;
+        seL4_Uint8 num;
+        seL4_Word rights_word;
+        asid_t asid, frame_asid;
+        vspace_root_t *vspaceRoot;
+
+        /* Check that the correct number of arguments was passed in */
+        if (length < 3) { 
+            userError("VSpaceRoot Remap Range: Truncated message. Expected %d args, recieved %d args", 3, length);
+            current_syscall_error.type = seL4_TruncatedMessage;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* The first arg is a seL4_Word but should actually be a cptr. The reason the type is set to word it to avoid lookup in the syscall path */
+        start = getSyscallArg(0, buffer);
+        num = getSyscallArg(1, buffer);
+        rights_word = getSyscallArg(2, buffer);
+
+        /* Ensure that num is in bounds */
+        if (num > 32) {
+            userError("VSpaceRoot Remap Range: Invalid argument - num too large");
+            current_syscall_error.type = seL4_InvalidArgument;
+            current_syscall_error.invalidArgumentNumber = 1;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the invoked cap is a valid vspace */
+        if (unlikely(!isValidNativeRoot(cap))) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the supplied pgd is ok */
+        vspaceRoot = cap_vtable_root_get_basePtr(cap);
+        asid = cap_vtable_root_get_mappedASID(cap);
+
+        findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpaceRoot Remap Range: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpaceRoot Remap Range: Invalid VSpace Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Iterate through the caller's vspace and confirm the validity of all the caps
+           in the range */
+        lookupCapAndSlot_ret_t lu_ret[num];
+        for (seL4_CPtr cptr = start; cptr < start + num; cptr++) {
+            uint8_t index = cptr - start;
+
+            /* Check that there is a cap in the slot */
+            lu_ret[index] = lookupCapAndSlot(NODE_STATE(ksCurThread), cptr);
+            if (unlikely(lu_ret[index].status != EXCEPTION_NONE)) {
+                userError("VSpaceRoot Remap Range: Capability lookup of %lu failed", cptr);
+                current_syscall_error.type = seL4_FailedLookup;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Check that the cap is a frame cap */
+            if (cap_get_capType(lu_ret[index].cap) != cap_frame_cap) {
+                userError("VSpaceRoot Remap Range: %lu is not a frame cap", cptr);
+                current_syscall_error.type = seL4_FailedLookup;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Check that the frame cap is mapped into the invoked vspace */
+            frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&lu_ret[index].cap);
+            if (frame_asid != asid) {
+                userError("VSpaceRoot Remap Range: %lu is not mapped to this vspace", cptr);
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidArgumentNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+        }
+
+        int num_remapped = 0;
+        for (int i = 0; i < num; i++) {
+            vm_rights_t vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
+                            rightsFromWord(rights_word));
+            vptr_t vaddr = cap_frame_cap_get_capFMappedAddress(lu_ret[i].cap);
+            vm_page_size_t frameSize = cap_frame_cap_get_capFSize(lu_ret[i].cap);
+
+            if (frameSize == ARMSmallPage) {
+                lookupPTSlot_ret_t lookup_ret = lookupPTSlot(vspaceRoot, vaddr);
+
+                if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                /* Ensure there is a mapping associated with the vaddr */
+                if (!pte_ptr_get_present(lookup_ret.ptSlot)) {
+                    continue;
+                }
+
+                /* Change the permissions of the mapping */
+                pte_ptr_set_AP(lookup_ret.ptSlot, APFromVMRights(vmRights));
+
+                /* Clean the cache and the TLB */
+                cleanByVA_PoU((vptr_t)lookup_ret.ptSlot, pptr_to_paddr(lookup_ret.ptSlot));
+                invalidateTLBByASIDVA(asid, vaddr);
+
+            } else if (frameSize == ARMLargePage) {
+
+                lookupPDSlot_ret_t lookup_ret = lookupPDSlot(vspaceRoot, vaddr);
+
+                if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                /* Ensure there is a mapping associated with the vaddr */
+                if (!pde_pde_large_ptr_get_present(lookup_ret.pdSlot)) {
+                    continue;
+                }
+
+                /* Change the permissions of the mapping */
+                pde_pde_large_ptr_set_AP(lookup_ret.pdSlot, APFromVMRights(vmRights));
+
+                /* Clean the cache and the TLB */
+                cleanByVA_PoU((vptr_t)lookup_ret.pdSlot, pptr_to_paddr(lookup_ret.pdSlot));
+                invalidateTLBByASIDVA(asid, vaddr);
+
+            } else {
+
+                lookupPUDSlot_ret_t lookup_ret = lookupPUDSlot(vspaceRoot, vaddr);
+
+                if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                /* Ensure there is a mapping associated with the vaddr */
+                if (!pude_pude_1g_ptr_get_present(lookup_ret.pudSlot)) {
+                    continue;
+                }
+
+                /* Change the permissions of the mapping */
+                pude_pude_1g_ptr_set_AP(lookup_ret.pudSlot, APFromVMRights(vmRights));
+
+                /* Clean the cache and the TLB */
+                cleanByVA_PoU((vptr_t)lookup_ret.pudSlot, pptr_to_paddr(lookup_ret.pudSlot));
+                invalidateTLBByASIDVA(asid, vaddr);
+
+                }
+
+                num_remapped++;
+        }
+
+        /* Pass back the number of pages that were actually remapped */
+        setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, num_remapped);
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
+
     case ARMVSpaceClean_Data:
     case ARMVSpaceInvalidate_Data:
     case ARMVSpaceCleanInvalidate_Data:
-    case ARMVSpaceUnify_Instruction:
+    case ARMVSpaceUnify_Instruction: {
+        vptr_t start, end;
+        paddr_t pstart;
+        asid_t asid;
+        vspace_root_t *vspaceRoot;
+        lookupFrame_ret_t resolve_ret;
+        findVSpaceForASID_ret_t find_ret;
 
         if (length < 2) {
             userError("VSpaceRoot Flush: Truncated message.");
@@ -1777,6 +1943,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return performVSpaceFlush(invLabel, vspaceRoot, asid, start, end - 1, pstart);
+    }
 
     default:
         current_syscall_error.type = seL4_IllegalOperation;
