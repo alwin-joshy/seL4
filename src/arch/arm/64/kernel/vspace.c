@@ -1852,6 +1852,9 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                 num_remapped++;
         }
 
+        /* Flush the TLB*/
+        // invalidateTLBByASID(asid);
+        
         /* Pass back the number of pages that were actually remapped */
         setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, num_remapped);
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
