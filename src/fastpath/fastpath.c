@@ -720,6 +720,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         sc->scReply->replyNext = reply_ptr->replyNext;
     }
 
+    /* TODO neccessary? */
     reply_ptr->replyPrev.words[0] = 0;
     reply_ptr->replyNext.words[0] = 0;
 #else
@@ -733,22 +734,13 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
 #ifdef CONFIG_EXCEPTION_FASTPATH
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
-        bool_t restart = 0;
-        switch (fault_type) {
-        /* Add cases for other types of faults here */
-        default:
-            restart = 1;
-        }
+        /* Note - this works as is for VM faults but will need to be changed when other faults are added. VM faults always
+         * restart the faulting thread upon reply but this is not always the case with other types of faults. This can either
+         * be handled in the fastpath or redirected to the slowpath, but either way, this code must be changed so we do not
+         * forcefully switch to a thread which is meant to stay inactive. */
 
-        /* Note - this works as is for VM faults but will need to be changed when other faults are added. This is because
-         * vm faults always restart the faulting thread upon reply but this is not necessarily the case with other types
-         * of faults, which may instead become inactive. This can either be handled in the slowpath or redirected to the
-         * slowpath, but either way it must be changed so that we do not try and forcefully switch to a thread which is
-         * meant to be inactive. */
-        if (restart) {
-            word_t pc = getRestartPC(caller);
-            setNextPC(caller, pc);
-        }
+        word_t pc = getRestartPC(caller);
+        setNextPC(caller, pc);
 
         /* Clear the tcbFault variable to indicate that it has been handled. */
         caller->tcbFault = seL4_Fault_NullFault_new();
@@ -760,6 +752,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         /* The badge/msginfo do not need to be not sent - this is not necessary for exceptions */
         restore_user_context();
     } else {
+#endif
         /* There's no fault, so straight to the transfer. */
 
         /* Replies don't have a badge. */
@@ -774,25 +767,10 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
         fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
+
+#ifdef CONFIG_EXCEPTION_FASTPATH
     }
-#else
-    /* There's no fault, so straight to the transfer. */
-
-    /* Replies don't have a badge. */
-    badge = 0;
-
-    fastpath_copy_mrs(length, NODE_STATE(ksCurThread), caller);
-
-    /* Dest thread is set Running, but not queued. */
-    thread_state_ptr_set_tsType_np(&caller->tcbState,
-                                   ThreadState_Running);
-    switchToThread_fp(caller, cap_pd, stored_hw_asid);
-
-    msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
-
-    fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 #endif
-
 }
 
 #ifdef CONFIG_SIGNAL_FASTPATH

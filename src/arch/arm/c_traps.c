@@ -64,17 +64,12 @@ void VISIBLE NORETURN c_handle_enfp(void)
 
 void NORETURN vm_fault_slowpath(vm_fault_type_t type)
 {
-#ifdef TRACK_KERNEL_ENTRIES
-    ksKernelEntry.is_fastpath = 0;
-#endif
     handleVMFaultEvent(type);
-
     restore_user_context();
     UNREACHABLE();
 }
 
-
-void VISIBLE NORETURN c_handle_data_fault(void)
+static inline void NORETURN c_handle_vm_fault(vm_fault_type_t type)
 {
     NODE_LOCK_SYS;
     c_entry_hook();
@@ -82,34 +77,26 @@ void VISIBLE NORETURN c_handle_data_fault(void)
 #ifdef TRACK_KERNEL_ENTRIES
     ksKernelEntry.path = Entry_VMFault;
     ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
+    ksKernelEntry.is_fastpath = false;
 #endif
 
 #ifdef CONFIG_EXCEPTION_FASTPATH
-    fastpath_vm_fault(seL4_DataFault);
-    UNREACHABLE();
-#else
-    vm_fault_slowpath(seL4_DataFault);
-    UNREACHABLE();
+    fastpath_vm_fault(type);
+# else
+    handleVMFaultEvent(type);
+    restore_user_context();
 #endif
+    UNREACHABLE();
+}
+
+void VISIBLE NORETURN c_handle_data_fault(void)
+{
+    c_handle_vm_fault(seL4_DataFault);
 }
 
 void VISIBLE NORETURN c_handle_instruction_fault(void)
 {
-    NODE_LOCK_SYS;
-    c_entry_hook();
-
-#ifdef TRACK_KERNEL_ENTRIES
-    ksKernelEntry.path = Entry_VMFault;
-    ksKernelEntry.word = getRegister(NODE_STATE(ksCurThread), NextIP);
-#endif
-
-#ifdef CONFIG_EXCEPTION_FASTPATH
-    fastpath_vm_fault(seL4_InstructionFault);
-    UNREACHABLE();
-#else
-    vm_fault_slowpath(seL4_InstructionFault);
-    UNREACHABLE();
-#endif
+    c_handle_vm_fault(seL4_InstructionFault);
 }
 
 void VISIBLE NORETURN c_handle_interrupt(void)
