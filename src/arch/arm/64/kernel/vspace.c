@@ -1865,8 +1865,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
             /* Clean the TLB */
             invalidateTLBByASIDVA(asid, vaddr);
-
-            changed |= BIT(1 << i);
+            changed |= BIT(i);
         }
 
         /* Pass back the pages that were actually changed */
