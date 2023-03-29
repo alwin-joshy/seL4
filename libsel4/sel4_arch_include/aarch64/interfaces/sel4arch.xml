@@ -229,7 +229,27 @@
                    The rights to assign each page in the range.
                 </description>
             </param>
-            <param dir="out" name="num_remapped" type="seL4_Uint8" description="The number of frames remapped" />
+            <param dir="out" name="remapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
+        </method>
+        <method id="ARMVspaceUnmap_Range" name="Unmap_Range"
+            manual_name="Unmap range" manual_label="vspace_unmap_range">
+            <brief>
+                Unmap a range within a vspace
+            </brief>>
+            <description>
+                 <docref>See <autoref label="ch:vspace"/>.</docref>
+            </description>
+            <param dir="in" name="start_cptr" type="seL4_Word">
+                <description>
+                   CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
+                </description>
+            </param>
+            <param dir="in" name="num_frames" type="seL4_Uint8">
+                <description>
+                    The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
+                </description>
+            </param>
+            <param dir="out" name="unmapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
         </method>
     </interface>
     <interface name="seL4_ARM_PageUpperDirectory" manual_name="Page Upper Directory"
