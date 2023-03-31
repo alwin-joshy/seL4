@@ -1694,11 +1694,11 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
     case ARMVspaceUnmap_Range: 
     case ARMVspaceRemap_Range: {
         seL4_CPtr start;
-        seL4_Uint8 num;
+        seL4_Uint32 num;
         seL4_Word rights_word = 0;
         asid_t asid, frame_asid;
         vspace_root_t *vspaceRoot;
-        lookupCapAndSlot_ret_t lu_ret[32];
+        lookupCapAndSlot_ret_t lu_ret[MAX_BATCH];
 
         /* Check that the correct number of arguments was passed in */
         if ((invLabel == ARMVspaceRemap_Range && length < 3) || (invLabel == ARMVspaceUnmap_Range && length < 2)) { 
@@ -1750,7 +1750,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         /* Iterate through the caller's vspace and confirm the validity of all the caps
            in the range */
-        
+
         for (seL4_CPtr cptr = start; cptr < start + num; cptr++) {
             uint8_t index = cptr - start;
             /* Check that there is a cap in the slot */
@@ -1782,28 +1782,40 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         for (int i = 0; i < num; i++) {
             vptr_t vaddr = cap_frame_cap_get_capFMappedAddress(lu_ret[i].cap);
             vm_page_size_t frameSize = cap_frame_cap_get_capFSize(lu_ret[i].cap);
+            paddr_t base = pptr_to_paddr((void *)cap_frame_cap_get_capFBasePtr(lu_ret[i].cap));
 
             if (frameSize == ARMSmallPage) {
                 lookupPTSlot_ret_t lookup_ret = lookupPTSlot(vspaceRoot, vaddr);
 
-                /* Structures above the page don't exist - probably a stale cap so ignore it */
+                /* Structures above the page don't exist - stale cap so ignore it */
                 if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
                     continue;
                 }
 
-                /* Ensure there is a mapping associated with the vaddr */
-                if (!pte_ptr_get_present(lookup_ret.ptSlot)) {
-                    continue;
-                }
-
                 if (invLabel == ARMVspaceRemap_Range) {
+
+                    /* Ensure there is a mapping associated with the vaddr */
+                    /* NOTE: This currently allows stale mappings to overwrite the mappings that replaced them */
+                    if (!pte_ptr_get_present(lookup_ret.ptSlot)) {
+                        continue;
+                    }
+
                     /* Change the permissions of the mapping */
                     vm_rights_t vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
                                                         rightsFromWord(rights_word));
                     pte_ptr_set_AP(lookup_ret.ptSlot, APFromVMRights(vmRights));
+                    pte_ptr_set_page_base_address(lookup_ret.ptSlot, base);
                 } else {
-                    /* Unmap the page */
-                    *(lookup_ret.ptSlot) = pte_invalid_new();
+                    /* Unmap the page if there is a (non-stale) mapping associated with it*/
+                    if (pte_ptr_get_present(lookup_ret.ptSlot) &&
+                        pte_ptr_get_page_base_address(lookup_ret.ptSlot) ==  base) {
+
+                        *(lookup_ret.ptSlot) = pte_invalid_new();
+                    }
+
+                    /* Clean up the capability */
+                    cap_frame_cap_ptr_set_capFMappedASID(&lu_ret[i].slot->cap, asidInvalid);
+                    cap_frame_cap_ptr_set_capFMappedAddress(&lu_ret[i].slot->cap, 0);
                 }
 
                 /* Clean the cache */
@@ -1813,24 +1825,34 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
                 lookupPDSlot_ret_t lookup_ret = lookupPDSlot(vspaceRoot, vaddr);
 
-                /* Structures above the page don't exist - probably a stale cap so ignore it */
+                /* Structures above the page don't exist - stale cap so ignore it */
                 if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
                     continue;
                 }
 
-                /* Ensure there is a mapping associated with the vaddr */
-                if (!pde_pde_large_ptr_get_present(lookup_ret.pdSlot)) {
-                    continue;
-                }
-
                 if (invLabel == ARMVspaceRemap_Range) {
+                    /* Ensure there is a mapping associated with the vaddr */
+                    /* NOTE: This currently allows stale mappings to overwrite the mappings that replaced them */
+                    if (!pde_pde_large_ptr_get_present(lookup_ret.pdSlot)) {
+                        continue;
+                    }
+
                     /* Change the permissions of the mapping */
                     vm_rights_t vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
                                                         rightsFromWord(rights_word));
                     pde_pde_large_ptr_set_AP(lookup_ret.pdSlot, APFromVMRights(vmRights));
+                    pde_pde_large_ptr_set_page_base_address(lookup_ret.pdSlot, base);
                 } else {
-                    /* Unmap the page */
-                    *(lookup_ret.pdSlot) = pde_invalid_new();
+                    /* Unmap the page if there is a (non-stale) mapping associated with it*/
+                    if (pde_pde_large_ptr_get_present(lookup_ret.pdSlot) &&
+                        pde_pde_large_ptr_get_page_base_address(lookup_ret.pdSlot) == base) {
+
+                        *(lookup_ret.pdSlot) = pde_invalid_new();
+                    }
+
+                    /* Clean up the capability */
+                    cap_frame_cap_ptr_set_capFMappedASID(&lu_ret[i].slot->cap, asidInvalid);
+                    cap_frame_cap_ptr_set_capFMappedAddress(&lu_ret[i].slot->cap, 0);
                 }
 
                 /* Clean the cache */
@@ -1840,40 +1862,50 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
                 lookupPUDSlot_ret_t lookup_ret = lookupPUDSlot(vspaceRoot, vaddr);
 
-                /* Structures above the page don't exist - probably a stale cap so ignore it */
+                /* Structures above the page don't exist - stale cap so ignore it */
                 if (unlikely(lookup_ret.status != EXCEPTION_NONE)) {
                     continue;
                 }
 
-                /* Ensure there is a mapping associated with the vaddr */
-                if (!pude_pude_1g_ptr_get_present(lookup_ret.pudSlot)) {
-                    continue;
-                }
-
                 if (invLabel == ARMVspaceRemap_Range) {
+                    /* Ensure there is a mapping associated with the vaddr */
+                    /* NOTE: This currently allows stale mappings to overwrite the mappings that replaced them */
+                    if (!pude_pude_1g_ptr_get_present(lookup_ret.pudSlot)) {
+                        continue;
+                    }
+
                     /* Change the permissions of the mapping */
                     vm_rights_t vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
                                                         rightsFromWord(rights_word));
                     pude_pude_1g_ptr_set_AP(lookup_ret.pudSlot, APFromVMRights(vmRights));
+                    pude_pude_1g_ptr_set_page_base_address(lookup_ret.pudSlot, base);
                 } else {
-                    /* Unmap the page */
-                    *(lookup_ret.pudSlot) = pude_invalid_new();
+                    /* Unmap the page if there is a (non-stale) mapping associated with it*/
+                    if (pude_pude_1g_ptr_get_present(lookup_ret.pudSlot) &&
+                        pude_pude_1g_ptr_get_page_base_address(lookup_ret.pudSlot) == base) {
+
+                        *(lookup_ret.pudSlot) = pude_invalid_new();
+                    }
+
+                    /* Clean up the capability */
+                    cap_frame_cap_ptr_set_capFMappedASID(&lu_ret[i].slot->cap, asidInvalid);
+                    cap_frame_cap_ptr_set_capFMappedAddress(&lu_ret[i].slot->cap, 0);
                 }
+
                 /* Clean the cache */
                 cleanByVA_PoU((vptr_t)lookup_ret.pudSlot, pptr_to_paddr(lookup_ret.pudSlot));
             }
 
-            /* Clean the TLB */
-            invalidateTLBByASIDVA(asid, vaddr);
+            /* Set the bit indicating this capability was affected */
             changed |= BIT(i);
         }
 
         /* Pass back the pages that were actually changed */
+        invalidateTLBByASID(asid);
         setMR(NODE_STATE(ksCurThread), lookupIPCBuffer(true, NODE_STATE(ksCurThread)), 0, changed);
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return EXCEPTION_NONE;
     }
-
     case ARMVSpaceClean_Data:
     case ARMVSpaceInvalidate_Data:
     case ARMVSpaceCleanInvalidate_Data:

@@ -219,7 +219,7 @@
                    CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
                 </description>
             </param>
-            <param dir="in" name="num_frames" type="seL4_Uint8">
+            <param dir="in" name="num_frames" type="seL4_Uint32">
                 <description>
                     The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
                 </description>
@@ -244,7 +244,7 @@
                    CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
                 </description>
             </param>
-            <param dir="in" name="num_frames" type="seL4_Uint8">
+            <param dir="in" name="num_frames" type="seL4_Uint32">
                 <description>
                     The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
                 </description>
