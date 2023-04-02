@@ -255,10 +255,10 @@
             </error>
         </method>
         <method id="ARMVspaceUnmap_Range" name="Unmap_Range"
-            manual_name="Unmap range" manual_label="vspace_unmap_range">
+            manual_name="Unmap Range" manual_label="vspace_unmap_range">
             <brief>
                 Unmap a range within a vspace
-            </brief>>
+            </brief>
             <description>
                  <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>

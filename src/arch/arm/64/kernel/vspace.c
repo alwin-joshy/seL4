@@ -1691,7 +1691,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                                                  cte_t *cte, cap_t cap, word_t *buffer)
 {
     switch (invLabel) {
-    case ARMVspaceUnmap_Range: 
+    case ARMVspaceUnmap_Range:
     case ARMVspaceRemap_Range: {
         seL4_CPtr start;
         seL4_Uint32 num;
@@ -1701,8 +1701,9 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         lookupCapAndSlot_ret_t lu_ret[MAX_BATCH];
 
         /* Check that the correct number of arguments was passed in */
-        if ((invLabel == ARMVspaceRemap_Range && length < 3) || (invLabel == ARMVspaceUnmap_Range && length < 2)) { 
-            userError("VSpaceRoot Range Operation: Truncated message. Expected %d args, recieved %d args", (invLabel == ARMVspaceRemap_Range) ? 3 : 2, length);
+        if ((invLabel == ARMVspaceRemap_Range && length < 3) || (invLabel == ARMVspaceUnmap_Range && length < 2)) {
+            userError("VSpaceRoot Range Operation: Truncated message. Expected %d args, recieved %d args",
+                      (invLabel == ARMVspaceRemap_Range) ? 3 : 2, length);
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
