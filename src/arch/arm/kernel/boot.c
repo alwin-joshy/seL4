@@ -23,6 +23,7 @@
 #include <arch/machine/timer.h>
 #include <arch/machine/fpu.h>
 #include <arch/machine/tlb.h>
+#include <mode/kernel/kgdb.h>
 
 #ifdef CONFIG_ARM_SMMU
 #include <drivers/smmu/smmuv2.h>
@@ -630,6 +631,9 @@ static BOOT_CODE bool_t try_init_kernel(
      * nothing that touches any global data structures, nevertheless we grab the
      * BKL here to play safe. It is released when the kernel is left. */
     NODE_LOCK_SYS;
+
+    printf("Waiting for GDB connection...");
+    kgdb_handler();
 
     printf("Booting all finished, dropped to user space\n");
 

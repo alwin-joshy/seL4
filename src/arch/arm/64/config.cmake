@@ -19,5 +19,6 @@ add_sources(
         idle.c
         kernel/thread.c
         kernel/vspace.c
+        kernel/kgdb.c
     ASMFILES head.S traps.S
 )

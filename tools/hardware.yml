@@ -199,6 +199,16 @@ devices:
         macro: CONFIG_PRINTING
         user: true
         kernel_size: 0x1000
+  # - compatible:
+  #     - amlogic,meson-gx-uart
+  #   regions:
+  #     - index: 1
+  #       kernel: UART2_PPTR
+  #       macro: CONFIG_PRINTING
+  #       user: true
+  #       kernel_size: 0x1000
+
+
 
   # SiFive U54/U74 PLIC (HiFive, Polarfire)
   - compatible:

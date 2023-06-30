@@ -11,7 +11,7 @@
 		    &{/psci};
 
 		seL4,kernel-devices =
-		    "serial0",
+		    "serial1",
 		    &{/soc/interrupt-controller@c4301000},
 		    &{/timer};
 	};
