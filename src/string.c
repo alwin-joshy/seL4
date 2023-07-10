@@ -40,3 +40,25 @@ word_t strlcat(char *dest, const char *src, word_t size)
     }
     return len;
 }
+
+#define SS (sizeof(seL4_Word))
+#define ALIGN_MEMCHR (sizeof(seL4_Word)-1)
+#define ONES ((seL4_Word)-1/UCHAR_MAX)
+#define HIGHS (ONES * (UCHAR_MAX/2+1))
+#define HASZERO(x) (((x)-ONES) & ~(x) & HIGHS)
+
+void *memchr(const void *src, int c, word_t n)
+{
+    const unsigned char *s = src;
+    c = (unsigned char)c;
+    for (; ((seL4_Word)s & ALIGN_MEMCHR) && n && *s != c; s++, n--);
+    if (n && *s != c) {
+        const seL4_Word *w;
+        seL4_Word k = ONES * c;
+        for (w = (const void *)s; n>=SS && !HASZERO(*w ^ k); w++, n-=SS);
+        for (s = (const void *)w; n && *s != c; s++, n--);
+    }
+    return n ? (void *)s : 0;
+}
+
+

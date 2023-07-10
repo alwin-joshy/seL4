@@ -1371,6 +1371,35 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 }
 
 
+bool_t vaddrIsMapped(cap_t vspaceRootCap, vptr_t vaddr) {
+    if (!isValidNativeRoot(vspaceRootCap)) {
+        return false; 
+    }
+
+    if (vaddr >= PPTR_BASE && vaddr < PPTR_TOP) {
+        return true;
+    }
+
+	vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
+
+	lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, vaddr);
+	if (lu_ret_pt.status == EXCEPTION_NONE) {
+		return pte_ptr_get_present(lu_ret_pt.ptSlot);
+	}
+	
+	lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, vaddr);
+	if (lu_ret_pd.status == EXCEPTION_NONE) {
+		return pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot);
+	}
+
+	lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, vaddr);
+	if (lu_ret_pud.status == EXCEPTION_NONE) {
+		return pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot);
+	}
+
+	return false; 
+}
+
 static exception_t decodeARMPageTableInvocation(word_t invLabel, unsigned int length,
                                                 cte_t *cte, cap_t cap, word_t *buffer)
 {
