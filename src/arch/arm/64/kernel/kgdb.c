@@ -40,6 +40,15 @@ static char gdb_getChar(void)
 	return c;
 }
 
+static void mystrcpy(char *dest, char *src, int num) {
+	(void) num;
+	int i = -1;
+	do {
+		i++;
+		dest[i] = src[i];
+	} while (src[i] != '\0');
+}
+
 // static void uart2_putchar(char c) {
 //     while ((*UART_REG2(UART_STATUS) & UART_TX_FULL));
 
@@ -195,10 +204,10 @@ static void buf2regs(register_set_t *regs) {
  * Returns a ptr to last char put in buf or NULL on error (cannot read memory)
  */
 
-// static bool_t is_mapped(vptr_t vaddr) {
-//     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-// 	return vaddrIsMapped(vspaceRootCap, vaddr);
-// }
+static bool_t is_mapped(vptr_t vaddr) {
+    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
+	return vaddrIsMapped(vspaceRootCap, vaddr);
+}
 
 static char *mem2hex(char *mem, char *buf, int size)
 {
@@ -232,8 +241,8 @@ static char *hex2mem(char *buf, char *mem, int size)
     unsigned char c;
 
     for (i = 0; i < size; i++, mem++) {
-        // if (!is_mapped((vptr_t) mem & ~0xFFF))
-        //    return NULL;
+        if (!is_mapped((vptr_t) mem & ~0xFFF))
+           return NULL;
         c = hex(*buf++) << 4;
         c += hex(*buf++);
         *mem = c;
@@ -247,64 +256,56 @@ static char *hex2regs_buf(char *buf, register_set_t *regs) {
     return hex2mem(buf + 2 * NUM_REGS64 * sizeof(seL4_Word), (char *) &regs->cpsr, sizeof(seL4_Word)/2);
 }
 
-// static bool_t hex2int(char *hex_str, int max_bytes, seL4_Word *val) {
-//     int curr_bytes = 0;
-//     while (*hex_str && curr_bytes < max_bytes) {
-//         uint8_t byte = *hex_str++; 
-//         byte = hex(byte);
-//         if (byte == (uint8_t) -1) {
-//         	return false;
-//         }
-//         *val = (*val << 4) | (byte & 0xF);
-//         curr_bytes++;
-//     }
-//     return true;
-// }
+static char * hex2int(char *hex_str, int max_bytes, seL4_Word *val) {
+    int curr_bytes = 0;
+    while (*hex_str && curr_bytes < max_bytes) {
+        uint8_t byte = *hex_str; 
+        byte = hex(byte);
+        if (byte == (uint8_t) -1) {
+        	return hex_str;
+        }
+        *val = (*val << 4) | (byte & 0xF);
+        curr_bytes++;
+        hex_str++;
+    }
+    return hex_str;
+}
 
-// /* Expected string is of the form [Mm][a-fA-F0-9]{16},[a-fA-F0-9]+*/
-// static bool_t parse_mem_format(char* ptr, bool_t is_read, seL4_Word *addr, seL4_Word *size) {
-// 	*addr = 0;
-// 	*size = 0;
+/* Expected string is of the form [Mm][a-fA-F0-9]{16},[a-fA-F0-9]+*/
+static bool_t parse_mem_format(char* ptr, seL4_Word *addr, seL4_Word *size) {
+	*addr = 0;
+	*size = 0;
+	bool_t is_read = true; 
 
-// 	if (*ptr++ != (is_read ? 'm' : 'M')) {
-// 		return false; 
-// 	}
+	/* Are we dealing with a memory read or a memory write */
+	if (*ptr++ == 'M') {
+		is_read = false;
+	}
 
-// 	if (!hex2int(ptr, 16, addr)) {
-// 		return false;
-// 	}
+	/* Parse the address */
+	ptr = hex2int(ptr, 16, addr);
+	if (*ptr++ != ',') {
+		return false; 
+	}
 
-// 	while (*ptr != 0 && *ptr != ',') {
-// 		ptr++;
-// 	}
+	/* Parse the size */
+	ptr = hex2int(ptr, 16, size);
 
-// 	if (*ptr == 0) {
-// 		return false; 
-// 	}
-
-// 	ptr++;
-// 	if (!hex2int(ptr, 16, size)) {
-// 		return false; 
-// 	}
-
-// 	return true; 
-// }
-
-static void mystrcpy(char *dest, char *src, int num) {
-	(void) num;
-	int i = -1;
-	do {
-		i++;
-		dest[i] = src[i];
-	} while (src[i] != '\0');
+	/* Check that we have reached the end of the string */
+	if (is_read) {
+		// mystrcpy(kgdb_out, "E01", 4);		
+		return (*ptr == 0);
+	} else {
+		return (*ptr == 0 || *ptr == ':');
+	}
 }
 
 void kgdb_handler(void) {
 	char *ptr;
 	register_set_t regs;
-	// seL4_Word addr, size;
-	// int test = 25;
-	// printf("The address of test is ==> %p\n", &test);
+	seL4_Word addr, size;
+	int test = 25;
+	printf("The address of test is ==> %p\n", &test);
 
 	while (1) {
 		ptr = kgdb_get_packet();
@@ -320,34 +321,32 @@ void kgdb_handler(void) {
             hex2regs_buf(++ptr, &regs);
 			buf2regs(&regs);
 			mystrcpy(kgdb_out, "OK", 3);
-		// } else if (*ptr == 'm') {
-        //     if (!parse_mem_format(kgdb_in, true, &addr, &size)) {
-        //         /* Error parsing input */
-		// 		mystrcpy(kgdb_out, "E01", 4);
-        //     } else if (size * 2 > sizeof(kgdb_in) - 1) {
-        //         /* Buffer too big? Don't really get this */
-		// 		mystrcpy(kgdb_out, "E01", 4);
-        //     } else {
-        //         if (mem2hex((char *) addr, kgdb_out, size) == NULL) {
-        //             /* Failed to read the memory at the location */
-		// 			mystrcpy(kgdb_out, "E04", 4);
-        //         }
-        //     }
-		// } else if (*ptr == 'M') {
-		// 	if (!parse_mem_format(kgdb_in, false, &addr, &size)) {
-		// 		mystrcpy(kgdb_out, "E02", 4);
-
-        //     } else {
-        //         if ((ptr = memchr(kgdb_in, ':', BUFSIZE))) {
-        //             ptr++;
-        //             if (hex2mem(ptr, (char *) addr, size) == NULL) {
-		// 				mystrcpy(kgdb_out, "E03", 4);
-        //             } else {
-		// 				mystrcpy(kgdb_out, "OK", 3);
-
-        //             }
-        //         }
-        //     }
+		} else if (*ptr == 'm') {
+            if (!parse_mem_format(ptr, &addr, &size)) {
+                /* Error parsing input */
+				mystrcpy(kgdb_out, "E01", 4);
+            } else if (size * 2 > sizeof(kgdb_in) - 1) {
+                /* Buffer too big? Don't really get this */
+				mystrcpy(kgdb_out, "E01", 4);
+            } else {
+                if (mem2hex((char *) addr, kgdb_out, size) == NULL) {
+                    /* Failed to read the memory at the location */
+					mystrcpy(kgdb_out, "E04", 4);
+                }
+            }
+		} else if (*ptr == 'M') {
+			if (!parse_mem_format(kgdb_in , &addr, &size)) {
+				mystrcpy(kgdb_out, "E02", 4);
+            } else {
+                if ((ptr = memchr(kgdb_in, ':', BUFSIZE))) {
+                    ptr++;
+                    if (hex2mem(ptr, (char *) addr, size) == NULL) {
+						mystrcpy(kgdb_out, "E03", 4);
+                    } else {
+						mystrcpy(kgdb_out, "OK", 3);
+                    }
+                }
+            }
 		} else if (*ptr == 'c' || *ptr == 's') {
 			// seL4_Word addr; 
 			int stepping = *ptr == 's' ? 1 : 0;
@@ -377,6 +376,8 @@ void kgdb_handler(void) {
                 mystrcpy(kgdb_out, "l", 2);
             } else if (strncmp(ptr, "qC", 2) == 0) {
                 mystrcpy(kgdb_out, "QC1", 4);
+            } else if (strncmp(ptr, "qSymbol", 7) == 0) {
+                mystrcpy(kgdb_out, "OK", 3);
             }
 		} else if (*ptr == 'H') {
             /* TODO: THis should eventually do something */
