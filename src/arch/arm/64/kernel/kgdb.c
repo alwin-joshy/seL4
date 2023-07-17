@@ -329,9 +329,6 @@ void kgdb_handler(void) {
                 /* Buffer too big? Don't really get this */
 				mystrcpy(kgdb_out, "E01", 4);
             } else {
-                if (addr == 0xfffffffffffffff7) {
-                    mystrcpy(kgdb_out, "E05", 4);
-                }
                 if (mem2hex((char *) addr, kgdb_out, size) == NULL) {
                     /* Failed to read the memory at the location */
 					mystrcpy(kgdb_out, "E04", 4);
