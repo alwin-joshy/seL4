@@ -215,8 +215,8 @@ static char *mem2hex(char *mem, char *buf, int size)
     unsigned char c;
 
     for (i = 0; i < size; i++, mem++) {
-        // if (!is_mapped((vptr_t) mem & ~0xFFF))
-        //    return NULL;
+         if (!is_mapped((vptr_t) mem & ~0xFFF))
+            return NULL;
        	c = *mem;
         *buf++ = hexchars[c >> 4];
         *buf++ = hexchars[c % 16];
@@ -329,6 +329,9 @@ void kgdb_handler(void) {
                 /* Buffer too big? Don't really get this */
 				mystrcpy(kgdb_out, "E01", 4);
             } else {
+                if (addr == 0xfffffffffffffff7) {
+                    mystrcpy(kgdb_out, "E05", 4);
+                }
                 if (mem2hex((char *) addr, kgdb_out, size) == NULL) {
                     /* Failed to read the memory at the location */
 					mystrcpy(kgdb_out, "E04", 4);

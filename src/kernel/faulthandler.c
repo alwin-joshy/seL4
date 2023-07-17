@@ -167,5 +167,8 @@ void handleDoubleFault(tcb_t *tptr, seL4_Fault_t ex1)
     Arch_userStackTrace(tptr);
 #endif
 
+    printf("Waiting for GDB connection...");
+    kgdb_handler();
+
     setThreadState(tptr, ThreadState_Inactive);
 }

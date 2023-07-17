@@ -632,9 +632,6 @@ static BOOT_CODE bool_t try_init_kernel(
      * BKL here to play safe. It is released when the kernel is left. */
     NODE_LOCK_SYS;
 
-    printf("Waiting for GDB connection...");
-    kgdb_handler();
-
     printf("Booting all finished, dropped to user space\n");
 
     /* kernel successfully initialized */
