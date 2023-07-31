@@ -33,12 +33,21 @@ typedef struct readWordFromVSpace_ret {
     word_t value;
 } readWordFromVSpace_ret_t;
 
+typedef struct readHalfWordFromVSpace_ret {
+    exception_t status;
+    uint32_t value;
+} readHalfWordFromVSpace_ret_t;
+
 typedef struct writeWordToVSpace_ret {
     exception_t status;
 } writeWordToVSpace_ret_t;
 
+typedef writeWordToVSpace_ret_t writeHalfWordToVSpace_ret_t; 
+
 readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr);
+readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr);
 writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_t value);
+writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value);
 
 #endif
 

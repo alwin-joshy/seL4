@@ -718,15 +718,13 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
             addr = GET_PAR_ADDR(addressTranslateS1(addr)) | (addr & MASK(PAGE_BITS));
         }
 #endif
-        // if (isDebugFault(fault)) {
-        printf("here\n");
+
         kgdb_handle_debug_fault(addr);
+        kgdb_handler();
         volatile int i = 0;
         while (true) {
             i++;
         }
-        kgdb_handler();
-        // }
 
         current_fault = seL4_Fault_VMFault_new(addr, fault, false);
         return EXCEPTION_FAULT;
@@ -744,15 +742,12 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
         }
 #endif
 
-        // if (isDebugFault(fault)) {
-        printf("here\n");
         kgdb_handle_debug_fault(pc);
+        kgdb_handler();
         volatile int i = 0;
         while (true) {
             i++;
         }
-        kgdb_handler();
-        // }
 
         current_fault = seL4_Fault_VMFault_new(pc, fault, true);
         return EXCEPTION_FAULT;
@@ -1867,6 +1862,30 @@ void kernelDataAbort(word_t pc)
 //     word_t value;
 // } readWordFromVSpace_ret_t;
 
+readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr)
+{
+    lookupFrame_ret_t lookup_frame_ret;
+    readHalfWordFromVSpace_ret_t ret;
+    word_t offset;
+    pptr_t kernel_vaddr;
+    uint32_t *value;
+
+    lookup_frame_ret = lookupFrame(pd, vaddr);
+
+    if (!lookup_frame_ret.valid) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
+
+    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
+    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
+    value = (uint32_t *)(kernel_vaddr + offset);
+
+    ret.status = EXCEPTION_NONE;
+    ret.value = *value;
+    return ret;
+}
+
 readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 {
     readWordFromVSpace_ret_t ret;
@@ -1895,6 +1914,29 @@ readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 // typedef struct writeWordToVSpace_ret {
 //     exception_t status;
 // } writeWordToVSpace_ret_t;
+
+writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value) {
+    lookupFrame_ret_t lookup_frame_ret;
+    writeHalfWordToVSpace_ret_t ret;
+    word_t offset;
+    pptr_t kernel_vaddr;
+    uint32_t *addr;
+
+    lookup_frame_ret = lookupFrame(pd, vaddr);
+
+    if (!lookup_frame_ret.valid) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
+
+    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
+    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
+    addr = (uint32_t *)(kernel_vaddr + offset);
+
+    *addr = value;
+    ret.status = EXCEPTION_NONE;
+    return ret;
+}
 
 writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_t value)
 {

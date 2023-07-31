@@ -13,3 +13,4 @@ typedef struct register_set {
 
 void kgdb_handler(void);
 void kgdb_handle_debug_fault(seL4_Word vaddr);
+void kgdb_send_debug_packet(char *buf, int len);

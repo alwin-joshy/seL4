@@ -41,6 +41,13 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
     UNREACHABLE();
 #endif
 
+
+    /* Check if we hit a software breakpoint */
+    if (((getESR() >> 0x1A) & 0x3F) == 0x3C) {
+        kgdb_handle_debug_fault(getRestartPC(NODE_STATE(ksCurThread)));
+        kgdb_handler();
+    } 
+
     /* There's only one user-level fault on ARM, and the code is (0,0) */
 #ifdef CONFIG_ARCH_AARCH32
     handleUserLevelFault(0, 0);

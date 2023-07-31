@@ -178,6 +178,11 @@ static void kgdb_put_packet(char *buf)
     }
 }
 
+void kgdb_send_debug_packet(char *buf, int len) {
+    mystrcpy(kgdb_out, buf, len);
+    kgdb_put_packet(kgdb_out);
+}
+
 /**
  * Translates from registers to a registers buffer that gdb expects.
  */
@@ -315,6 +320,15 @@ static bool_t parse_mem_format(char *ptr, seL4_Word *addr, seL4_Word *size)
 
 static bool_t parse_breakpoint_format(char *ptr, seL4_Word *addr, seL4_Word *kind)
 {
+    /* Parse the first three characters */
+    assert (*ptr == 'Z' || *ptr == 'z');
+    ptr++;
+    assert (*ptr >= '0' && *ptr <= '4');
+    ptr++;
+    assert(*ptr++ == ',');
+
+    /* Parse the addr and kind */
+
     *addr = 0;
     *kind = 0;
 
@@ -346,17 +360,15 @@ sw_break_t software_breakpoints[MAX_SW_BREAKS] = {0};
 
 void kgdb_handle_debug_fault(seL4_Word vaddr)
 {
-    // if (seL4_Fault_DebugException_get_exceptionReason(current_fault) == seL4_SoftwareBreakRequest) {
     mystrcpy(kgdb_out, "T05swbreak:;", 13);
     kgdb_put_packet(kgdb_out);
-    // }
 }
 
 static bool_t aarch64_instruction_read(seL4_Word addr, uint32_t *instr)
 {
     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
     vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
-    readWordFromVSpace_ret_t ret = readWordFromVSpace(vspaceRoot, addr);
+    readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRoot, addr);
     if (ret.status) {
         return false;
     }
@@ -368,7 +380,7 @@ static bool_t aarch64_instruction_write(seL4_Word addr, uint32_t instr)
 {
     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
     vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
-    writeWordToVSpace_ret_t ret = writeWordToVSpace(vspaceRoot, addr, instr);
+    writeHalfWordToVSpace_ret_t ret = writeHalfWordToVSpace(vspaceRoot, addr, instr);
     if (ret.status) {
         return false;
     }
@@ -382,10 +394,6 @@ static bool_t set_software_breakpoint(seL4_Word addr)
     if (!aarch64_instruction_read(addr, &tmp.orig_instr)) {
         return false;
     }
-
-    // char *buf = mem2hex((char *) &tmp.orig_instr, kgdb_out, 4);
-    // uint32_t random = AARCH64_BREAK_KGDB_DYN_DBG;
-    // buf = mem2hex((char *) &random, buf, 4);
 
     if (!aarch64_instruction_write(addr, AARCH64_BREAK_KGDB_DYN_DBG)) {
         return false;
@@ -401,6 +409,25 @@ static bool_t set_software_breakpoint(seL4_Word addr)
 
     aarch64_instruction_write(addr, tmp.orig_instr);
     return false;
+}
+
+static bool_t unset_software_breakpoint(seL4_Word addr) {
+    int i = 0;
+    for (i = 0; i < MAX_SW_BREAKS; i++) {
+        if (software_breakpoints[i].addr == addr) {
+            break;
+        }
+    }
+
+    if (i == MAX_SW_BREAKS) {
+        return false; 
+    }
+
+    if (!aarch64_instruction_write(addr, software_breakpoints[i].orig_instr)) {
+        return false; 
+    }
+
+    return true; 
 }
 
 void kgdb_handler(void)
@@ -493,24 +520,31 @@ void kgdb_handler(void)
             mystrcpy(kgdb_out, "T05swbreak:;", 13);
         } else if (*ptr == 'v') {
             if (strncmp(ptr, "vCont?", 7) == 0) {
-                mystrcpy(kgdb_out, "vCont;c;s", 10);
+                mystrcpy(kgdb_out, "vCont;c", 8);
             } else if (strncmp(ptr, "vCont;c", 7) == 0) {
                 break;
             }
         } else if (*ptr == 'z' || *ptr == 'Z') {
             /* Breakpoints and watchpoints */
-
-            /* Set a software breakpoint using binary rewriting */
             if (strncmp(ptr, "Z0", 2) == 0) {
+                /* Set a software breakpoint using binary rewriting */
                 if (!parse_breakpoint_format(ptr, &addr, &size)) {
                     mystrcpy(kgdb_out, "E01", 4);
                 }
                 if (!set_software_breakpoint(addr)) {
                     mystrcpy(kgdb_out, "E01", 4);
                 }
-                mystrcpy(kgdb_out, "OK", 3);
+                mystrcpy(kgdb_out, "OK", 3);            
+            } else if (strncmp(ptr, "z0", 2) == 0) {
+                /* Unset a software breakpoint */
+                if (!parse_breakpoint_format(ptr, &addr, &size)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                }
+                if (!unset_software_breakpoint(addr)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                }
+                mystrcpy(kgdb_out, "OK", 3);            
             }
-
             // if (strncmp(ptr, "Z1", 2) == 0) {
             //     /* set hardware breakpoint */
             //     parse_breakpoint_format()
