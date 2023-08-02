@@ -20,6 +20,7 @@
 #include <object/untyped.h>
 #include <arch/api/invocation.h>
 #include <arch/kernel/vspace.h>
+#include <mode/machine/debug.h>
 #include <linker.h>
 #include <plat/machine/hardware.h>
 #include <armv/context_switch.h>
@@ -717,6 +718,16 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
             addr = GET_PAR_ADDR(addressTranslateS1(addr)) | (addr & MASK(PAGE_BITS));
         }
 #endif
+        // if (isDebugFault(fault)) {
+        printf("here\n");
+        kgdb_handle_debug_fault(addr);
+        volatile int i = 0;
+        while (true) {
+            i++;
+        }
+        kgdb_handler();
+        // }
+
         current_fault = seL4_Fault_VMFault_new(addr, fault, false);
         return EXCEPTION_FAULT;
     }
@@ -732,6 +743,17 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
             pc = GET_PAR_ADDR(addressTranslateS1(pc)) | (pc & MASK(PAGE_BITS));
         }
 #endif
+
+        // if (isDebugFault(fault)) {
+        printf("here\n");
+        kgdb_handle_debug_fault(pc);
+        volatile int i = 0;
+        while (true) {
+            i++;
+        }
+        kgdb_handler();
+        // }
+
         current_fault = seL4_Fault_VMFault_new(pc, fault, true);
         return EXCEPTION_FAULT;
     }
@@ -1371,33 +1393,34 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 }
 
 
-bool_t vaddrIsMapped(cap_t vspaceRootCap, vptr_t vaddr) {
+bool_t vaddrIsMapped(cap_t vspaceRootCap, vptr_t vaddr)
+{
     if (vaddr >= USER_TOP) {
         return true;
     }
 
     if (!isValidNativeRoot(vspaceRootCap)) {
-        return false; 
+        return false;
     }
 
-	vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
+    vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
 
-	lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, vaddr);
-	if (lu_ret_pt.status == EXCEPTION_NONE) {
-		return pte_ptr_get_present(lu_ret_pt.ptSlot);
-	}
-	
-	lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, vaddr);
-	if (lu_ret_pd.status == EXCEPTION_NONE) {
-		return pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot);
-	}
+    lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, vaddr);
+    if (lu_ret_pt.status == EXCEPTION_NONE) {
+        return pte_ptr_get_present(lu_ret_pt.ptSlot);
+    }
 
-	lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, vaddr);
-	if (lu_ret_pud.status == EXCEPTION_NONE) {
-		return pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot);
-	}
+    lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, vaddr);
+    if (lu_ret_pd.status == EXCEPTION_NONE) {
+        return pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot);
+    }
 
-	return false; 
+    lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, vaddr);
+    if (lu_ret_pud.status == EXCEPTION_NONE) {
+        return pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot);
+    }
+
+    return false;
 }
 
 static exception_t decodeARMPageTableInvocation(word_t invLabel, unsigned int length,
@@ -1839,12 +1862,12 @@ void kernelDataAbort(word_t pc)
 #endif /* CONFIG_DEBUG_BUILD */
 
 #ifdef CONFIG_PRINTING
-typedef struct readWordFromVSpace_ret {
-    exception_t status;
-    word_t value;
-} readWordFromVSpace_ret_t;
+// typedef struct readWordFromVSpace_ret {
+//     exception_t status;
+//     word_t value;
+// } readWordFromVSpace_ret_t;
 
-static readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
+readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 {
     readWordFromVSpace_ret_t ret;
     word_t offset;
@@ -1866,6 +1889,34 @@ static readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vad
 
     ret.status = EXCEPTION_NONE;
     ret.value = *value;
+    return ret;
+}
+
+// typedef struct writeWordToVSpace_ret {
+//     exception_t status;
+// } writeWordToVSpace_ret_t;
+
+writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_t value)
+{
+    lookupFrame_ret_t lookup_frame_ret;
+    writeWordToVSpace_ret_t ret;
+    word_t offset;
+    pptr_t kernel_vaddr;
+    word_t *addr;
+
+    lookup_frame_ret = lookupFrame(pd, vaddr);
+
+    if (!lookup_frame_ret.valid) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
+
+    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
+    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
+    addr = (word_t *)(kernel_vaddr + offset);
+
+    *addr = value;
+    ret.status = EXCEPTION_NONE;
     return ret;
 }
 
@@ -1962,4 +2013,3 @@ exception_t benchmark_arch_map_logBuffer(word_t frame_cptr)
     return EXCEPTION_NONE;
 }
 #endif /* CONFIG_KERNEL_LOG_BUFFER */
-

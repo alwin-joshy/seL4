@@ -24,6 +24,7 @@
 #include <string.h>
 #include <kernel/traps.h>
 #include <arch/machine.h>
+#include <mode/kernel/kgdb.h>
 #ifdef ENABLE_SMP_SUPPORT
 #include <smp/ipi.h>
 #endif
@@ -128,6 +129,11 @@ exception_t handleUnknownSyscall(word_t w)
             halt();
         }
         setThreadName(TCB_PTR(cap_thread_cap_get_capTCBPtr(lu_ret.cap)), name);
+        return EXCEPTION_NONE;
+    }
+
+    if (w == SysDebugEnterKGDB) {
+        kgdb_handler();
         return EXCEPTION_NONE;
     }
 #ifdef ENABLE_SMP_SUPPORT
