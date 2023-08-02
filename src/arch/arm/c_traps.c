@@ -14,6 +14,7 @@
 #include <sel4/benchmark_track_types.h>
 #include <benchmark/benchmark_track.h>
 #include <benchmark/benchmark_utilisation.h>
+#include <mode/kernel/kgdb.h>
 #include <arch/machine.h>
 
 void VISIBLE NORETURN c_handle_undefined_instruction(void)
@@ -41,12 +42,15 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
     UNREACHABLE();
 #endif
 
-
-    /* Check if we hit a software breakpoint */
     if (((getESR() >> 0x1A) & 0x3F) == 0x3C) {
-        kgdb_handle_debug_fault(getRestartPC(NODE_STATE(ksCurThread)));
+        /* Check if we hit a software breakpoint */
+        kgdb_handle_debug_fault(DEBUG_SW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
         kgdb_handler();
-    } 
+    } else if (((getESR() >> 0x1A) & 0x3F) == 0x30) {
+        /* Check if we hit a hardware breakpoint */
+        kgdb_handle_debug_fault(DEBUG_HW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
+        kgdb_handler();
+    }
 
     /* There's only one user-level fault on ARM, and the code is (0,0) */
 #ifdef CONFIG_ARCH_AARCH32

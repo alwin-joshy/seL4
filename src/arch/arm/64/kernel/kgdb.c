@@ -12,6 +12,39 @@
 #define UART_TX_FULL        BIT(21)
 #define UART_REG2(x) ((volatile uint32_t *)(UART2_PPTR + (x)))
 
+
+/* Software breakpoint related stuff */
+typedef struct sw_breakpoint {
+    uint64_t addr;
+    uint32_t orig_instr;
+} sw_break_t;
+
+#define MAX_SW_BREAKS 50
+#define AARCH64_BREAK_MON   0xd4200000
+#define KGDB_DYN_DBG_BRK_IMM        0x400
+#define AARCH64_BREAK_KGDB_DYN_DBG  \
+    (AARCH64_BREAK_MON | (KGDB_DYN_DBG_BRK_IMM << 5))
+
+sw_break_t software_breakpoints[MAX_SW_BREAKS] = {0};
+
+/* Hardware breapoint related stuff */
+
+#define DBGBCR_BT 0xF00000
+#define DBGBCR_EN 0x1
+#define DBGBCR_BAS 0x1E0
+#define DBGBCR_PMC 0x6
+
+#define DBGBVR_RESS 0xFFE0000000000000
+#define DBGBVR_VA   0x1FFFFFFFFFFFC
+
+#define MDSCR_MDE   (1 << 15)
+
+typedef struct hw_breakpoint {
+    uint64_t addr;
+} hw_break_t;
+
+hw_break_t hardware_breakpoints[seL4_NumExclusiveBreakpoints] = {0};
+
 // #define DEBUG_PRINTS
 
 /*
@@ -345,23 +378,15 @@ static bool_t parse_breakpoint_format(char *ptr, seL4_Word *addr, seL4_Word *kin
     return true;
 }
 
-typedef struct sw_breakpoint {
-    uint64_t addr;
-    uint32_t orig_instr;
-} sw_break_t;
-
-#define MAX_SW_BREAKS 50
-#define AARCH64_BREAK_MON   0xd4200000
-#define KGDB_DYN_DBG_BRK_IMM        0x400
-#define AARCH64_BREAK_KGDB_DYN_DBG  \
-    (AARCH64_BREAK_MON | (KGDB_DYN_DBG_BRK_IMM << 5))
-
-sw_break_t software_breakpoints[MAX_SW_BREAKS] = {0};
-
-void kgdb_handle_debug_fault(seL4_Word vaddr)
+void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr)
 {
-    mystrcpy(kgdb_out, "T05swbreak:;", 13);
-    kgdb_put_packet(kgdb_out);
+    if (type == 0) {
+        mystrcpy(kgdb_out, "T05swbreak:;", 13);
+        kgdb_put_packet(kgdb_out);
+    } else {
+        mystrcpy(kgdb_out, "T05hwbreak:;", 13);
+        kgdb_put_packet(kgdb_out);
+    }
 }
 
 static bool_t aarch64_instruction_read(seL4_Word addr, uint32_t *instr)
@@ -387,7 +412,7 @@ static bool_t aarch64_instruction_write(seL4_Word addr, uint32_t instr)
     return true;
 }
 
-static bool_t set_software_breakpoint(seL4_Word addr)
+static UNUSED bool_t set_software_breakpoint(seL4_Word addr)
 {
     sw_break_t tmp;
 
@@ -430,14 +455,104 @@ static bool_t unset_software_breakpoint(seL4_Word addr) {
     return true; 
 }
 
+static void set_dbgbcr(int breakpoint_num) {
+    word_t dbgbcr_val = 0;
+
+    switch (breakpoint_num) {
+        case 0 : MRS("DBGBCR0_EL1", dbgbcr_val); break;
+        case 1 : MRS("DBGBCR1_EL1", dbgbcr_val); break;
+        case 2 : MRS("DBGBCR2_EL1", dbgbcr_val); break;
+        case 3 : MRS("DBGBCR3_EL1", dbgbcr_val); break;
+        case 4 : MRS("DBGBCR4_EL1", dbgbcr_val); break;
+        case 5 : MRS("DBGBCR5_EL1", dbgbcr_val); break;
+        default : assert(0);
+    }
+
+    /* Set the breakpoint type */
+    dbgbcr_val = (dbgbcr_val & ~DBGBCR_BT) | (0x0 & DBGBCR_BT);
+    /* Set the behaviour of the breakpoint  */
+    dbgbcr_val = (dbgbcr_val & ~DBGBCR_PMC) | ((0x2 << 1) & DBGBCR_PMC);
+    /* Enable the breakpoint */
+    dbgbcr_val = dbgbcr_val | DBGBCR_EN;
+
+
+    switch (breakpoint_num) {
+        case 0 : MSR("DBGBCR0_EL1", dbgbcr_val); break;
+        case 1 : MSR("DBGBCR1_EL1", dbgbcr_val); break;
+        case 2 : MSR("DBGBCR2_EL1", dbgbcr_val); break;
+        case 3 : MSR("DBGBCR3_EL1", dbgbcr_val); break;
+        case 4 : MSR("DBGBCR4_EL1", dbgbcr_val); break;
+        case 5 : MSR("DBGBCR5_EL1", dbgbcr_val); break;
+        default : assert(0);
+    }
+}
+
+static void set_dbgbvr(int breakpoint_num, seL4_Word addr) {
+    word_t dbgbvr_val = 0;
+
+    switch (breakpoint_num) {
+        case 0 : MRS("DBGBVR0_EL1", dbgbvr_val); break;
+        case 1 : MRS("DBGBVR1_EL1", dbgbvr_val); break;
+        case 2 : MRS("DBGBVR2_EL1", dbgbvr_val); break;
+        case 3 : MRS("DBGBVR3_EL1", dbgbvr_val); break;
+        case 4 : MRS("DBGBVR4_EL1", dbgbvr_val); break;
+        case 5 : MRS("DBGBVR5_EL1", dbgbvr_val); break;
+        default : assert(0);
+    }
+
+    dbgbvr_val = (dbgbvr_val & ~DBGBVR_VA) | (addr & DBGBVR_VA);
+    if ((addr >> 48) & 0x1) {
+        dbgbvr_val = (dbgbvr_val & ~DBGBVR_RESS) | DBGBVR_RESS;
+    } else {
+        dbgbvr_val = (dbgbvr_val & ~DBGBVR_RESS);
+    }
+
+    switch (breakpoint_num) {
+        case 0 : MSR("DBGBVR0_EL1", dbgbvr_val); break;
+        case 1 : MSR("DBGBVR1_EL1", dbgbvr_val); break;
+        case 2 : MSR("DBGBVR2_EL1", dbgbvr_val); break;
+        case 3 : MSR("DBGBVR3_EL1", dbgbvr_val); break;
+        case 4 : MSR("DBGBVR4_EL1", dbgbvr_val); break;
+        case 5 : MSR("DBGBVR5_EL1", dbgbvr_val); break;
+        default : assert(0);
+    }
+}
+
+static bool_t set_hardware_breakpoint(seL4_Word addr) {
+
+    int i = 0; 
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        if (!hardware_breakpoints[i].addr) break;
+    }
+
+    if (i == seL4_NumExclusiveBreakpoints) return false ;
+
+    /* set the debug control register for this breakpoint number */
+    set_dbgbcr(i);
+    
+    /* Set the debug value register for this breakpoint number */
+    set_dbgbvr(i, addr);
+
+    /* Setup the general the debug control register */
+    word_t mdscr = 0;
+    MRS("MDSCR_EL1", mdscr);
+    /* Enable breakpoint exceptions. Ideally, this should only have to be done once */
+    mdscr = (mdscr | MDSCR_MDE);
+    MSR("MDSCR_EL1", mdscr);
+
+    /* Ensure that OS lock and double lock are unset */
+    word_t osdlar = 0;
+    MSR("osdlr_el1", osdlar);
+    word_t oslar = 0;
+    MSR("oslar_el1", oslar);
+    return true;
+}
+
 void kgdb_handler(void)
 {
     char *ptr;
     register_set_t regs;
     seL4_Word addr, size;
-    int test = 25;
-    printf("The address of test is ==> %p\n", &test);
-
     while (1) {
         ptr = kgdb_get_packet();
 #ifdef DEBUG_PRINTS
@@ -544,6 +659,15 @@ void kgdb_handler(void)
                     mystrcpy(kgdb_out, "E01", 4);
                 }
                 mystrcpy(kgdb_out, "OK", 3);            
+            } else if (strncmp(ptr, "Z1", 2) == 0) {
+                /* Set a hardware breakpoint */
+                if (!parse_breakpoint_format(ptr, &addr, &size)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                }
+                if (!set_hardware_breakpoint(addr)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                }
+                mystrcpy(kgdb_out, "OK", 3);
             }
             // if (strncmp(ptr, "Z1", 2) == 0) {
             //     /* set hardware breakpoint */

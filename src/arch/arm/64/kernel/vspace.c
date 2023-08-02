@@ -719,13 +719,6 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
         }
 #endif
 
-        kgdb_handle_debug_fault(addr);
-        kgdb_handler();
-        volatile int i = 0;
-        while (true) {
-            i++;
-        }
-
         current_fault = seL4_Fault_VMFault_new(addr, fault, false);
         return EXCEPTION_FAULT;
     }
@@ -741,13 +734,6 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
             pc = GET_PAR_ADDR(addressTranslateS1(pc)) | (pc & MASK(PAGE_BITS));
         }
 #endif
-
-        kgdb_handle_debug_fault(pc);
-        kgdb_handler();
-        volatile int i = 0;
-        while (true) {
-            i++;
-        }
 
         current_fault = seL4_Fault_VMFault_new(pc, fault, true);
         return EXCEPTION_FAULT;
