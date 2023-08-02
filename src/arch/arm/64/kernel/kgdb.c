@@ -1,3 +1,5 @@
+#ifdef CONFIG_GDB
+
 #include <mode/kernel/kgdb.h>
 #include <mode/machine/registerset.h>
 #include <mode/kernel/vspace.h>
@@ -681,3 +683,6 @@ void kgdb_handler(void)
         kgdb_put_packet(kgdb_out);
     }
 }
+
+#endif /* CONFIG_GDB */
+

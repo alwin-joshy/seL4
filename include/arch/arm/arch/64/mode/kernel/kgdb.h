@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef CONFIG_GDB
+
 #include <mode/kernel/kgdb.h>
 #include <types.h>
 
@@ -19,3 +21,5 @@ typedef struct register_set {
 void kgdb_handler(void);
 void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr);
 void kgdb_send_debug_packet(char *buf, int len);
+
+#endif /* CONFIG_GDB */

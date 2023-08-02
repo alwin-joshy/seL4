@@ -398,6 +398,14 @@ config_option(
 )
 
 config_option(
+    KernelGdb GDB
+    "Support GDB stubs in kernel-space."
+    DEFAULT OFF
+    DEPENDS "NOT KernelVerificationBuild"
+    DEFAULT_DISABLED OFF
+)
+
+config_option(
     KernelInvocationReportErrorIPC KERNEL_INVOCATION_REPORT_ERROR_IPC
     "Allows the kernel to write the userError to the IPC buffer"
     DEFAULT OFF

@@ -41,6 +41,9 @@
             <condition><config var="CONFIG_PRINTING"/></condition>
             <syscall name="DebugPutChar"  />
             <syscall name="DebugDumpScheduler" />
+        </config>
+        <config>
+            <condition><config var="CONFIG_GDB"/></condition>
             <syscall name="DebugEnterKGDB"/>
         </config>
         <config>

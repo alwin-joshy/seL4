@@ -24,9 +24,9 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr);
 void deleteASIDPool(asid_t base, asid_pool_t *pool);
 void deleteASID(asid_t asid, vspace_root_t *vspace);
 
-bool_t vaddrIsMapped(cap_t cap, vptr_t vaddr);
-
 #ifdef CONFIG_PRINTING
+
+bool_t vaddrIsMapped(cap_t cap, vptr_t vaddr);
 
 typedef struct readWordFromVSpace_ret {
     exception_t status;
@@ -42,14 +42,14 @@ typedef struct writeWordToVSpace_ret {
     exception_t status;
 } writeWordToVSpace_ret_t;
 
-typedef writeWordToVSpace_ret_t writeHalfWordToVSpace_ret_t; 
+typedef writeWordToVSpace_ret_t writeHalfWordToVSpace_ret_t;
 
 readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr);
 readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr);
 writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_t value);
 writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value);
 
-#endif
+#endif /* CONFIG_PRINTING */
 
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
 hw_asid_t getHWASID(asid_t asid);

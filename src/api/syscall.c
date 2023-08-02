@@ -24,7 +24,9 @@
 #include <string.h>
 #include <kernel/traps.h>
 #include <arch/machine.h>
+#ifdef CONFIG_GDB
 #include <mode/kernel/kgdb.h>
+#endif
 #ifdef ENABLE_SMP_SUPPORT
 #include <smp/ipi.h>
 #endif
@@ -132,10 +134,12 @@ exception_t handleUnknownSyscall(word_t w)
         return EXCEPTION_NONE;
     }
 
+#ifdef CONFIG_GDB
     if (w == SysDebugEnterKGDB) {
         kgdb_handler();
         return EXCEPTION_NONE;
     }
+#endif /* CONFIG_GDB */
 #ifdef ENABLE_SMP_SUPPORT
     if (w == SysDebugSendIPI) {
         return handle_SysDebugSendIPI();
