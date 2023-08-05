@@ -13,6 +13,7 @@
 #include <mode/kernel/vspace.h>
 
 #define IT_ASID 1 /* initial thread's ASID */
+#define MAX_BATCH 32 /* The maximum number of capabilities to operate on in a batch operation */
 
 cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_reg);
 cap_t create_unmapped_it_frame_cap(pptr_t pptr, bool_t use_large);

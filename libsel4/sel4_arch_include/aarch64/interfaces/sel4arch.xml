@@ -206,6 +206,97 @@
                 </description>
             </error>
         </method>
+        <method id="ARMVspaceRemap_Range" name="Remap_Range"
+            manual_name="Remap Range" manual_label="vspace_remap_range">
+            <brief>
+                Remap a range within a vspace
+            </brief>
+            <description>
+                 <docref>See <autoref label="ch:vspace"/>.</docref>
+            </description>
+            <param dir="in" name="start_cptr" type="seL4_Word">
+                <description>
+                   CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
+                </description>
+            </param>
+            <param dir="in" name="num_frames" type="seL4_Uint32">
+                <description>
+                    The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
+                </description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                   The rights to assign each page in the range.
+                </description>
+            </param>
+            <param dir="out" name="remapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
+            <error name="seL4_TruncatedMessage">
+                <description>
+                    Too few arguments were passed in to the system call.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+                <description>
+                    <texttt text="num_frames"/> is too large.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is not a vspace capability.
+                    Or, one of the specified frame capabilities is not a valid frame capability.
+                    Or, one of the specified frame capabilities is not currently mapped into <texttt text="_service"/>.
+                </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> does not refer to a valid vspace.
+                    Or, one of the specified frame capabilities in the range could not be looked up.
+                </description>
+            </error>
+        </method>
+        <method id="ARMVspaceUnmap_Range" name="Unmap_Range"
+            manual_name="Unmap Range" manual_label="vspace_unmap_range">
+            <brief>
+                Unmap a range within a vspace
+            </brief>
+            <description>
+                 <docref>See <autoref label="ch:vspace"/>.</docref>
+            </description>
+            <param dir="in" name="start_cptr" type="seL4_Word">
+                <description>
+                   CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
+                </description>
+            </param>
+            <param dir="in" name="num_frames" type="seL4_Uint32">
+                <description>
+                    The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
+                </description>
+            </param>
+            <param dir="out" name="unmapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
+            <error name="seL4_TruncatedMessage">
+                <description>
+                    Too few arguments were passed in to the system call.
+                </description>
+            </error>
+            <error name="seL4_InvalidArgument">
+                <description>
+                    <texttt text="num_frames"/> is too large.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="_service"/> is not a vspace capability.
+                    Or, one of the specified frame capabilities is not a valid frame capability.
+                    Or, one of the specified frame capabilities is not currently mapped into <texttt text="_service"/>.
+                </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="_service"/> does not refer to a valid vspace.
+                    Or, one of the specified frame capabilities in the range could not be looked up.
+                </description>
+            </error>
+        </method>
     </interface>
     <interface name="seL4_ARM_PageUpperDirectory" manual_name="Page Upper Directory"
         cap_description="Capability to the upper page directory being operated on.">
