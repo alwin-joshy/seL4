@@ -170,11 +170,16 @@ struct gic_dist_map {
     uint32_t spendsgirn[4];         /* [0xF20, 0xF30) */
     uint32_t res9[5236];            /* [0x0F30, 0x6100) */
 
-    uint64_t iroutern[960];         /* [0x6100, 0x7F00) */
+    uint64_t iroutern[960];         /* [0x6100, 0x7F00) irouter<n> to configure IRQs
+                                     * with INTID from 32 to 1019. iroutern[0] is the
+                                     * interrupt routing for SPI 32 */
 };
 
-_Static_assert(0x6100 == SEL4_OFFSETOF(struct gic_dist_map, iroutern),
-               "Error in struct gic_dist_map");
+/* __builtin_offsetof is not in the verification C subset, so we can only check this in
+   non-verification builds. We specifically do not declare a macro for the builtin, because
+   we do not want break the verification subset by accident. */
+unverified_compile_assert(error_in_gic_dist_map,
+                          0x6100 == __builtin_offsetof(struct gic_dist_map, iroutern));
 
 /* Memory map for GIC Redistributor Registers for control and physical LPI's */
 struct gic_rdist_map {          /* Starting */
@@ -384,13 +389,13 @@ static inline void set_gic_vcpu_ctrl_vmcr(uint32_t vmcr)
 static inline uint32_t get_gic_vcpu_ctrl_apr(void)
 {
     uint32_t reg;
-    MRS(ICH_AP0R0_EL2, reg);
+    MRS(ICH_AP1R0_EL2, reg);
     return reg;
 }
 
 static inline void set_gic_vcpu_ctrl_apr(uint32_t apr)
 {
-    MSR(ICH_AP0R0_EL2, apr);
+    MSR(ICH_AP1R0_EL2, apr);
 }
 
 static inline uint32_t get_gic_vcpu_ctrl_vtr(void)

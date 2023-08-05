@@ -179,7 +179,7 @@ static BOOT_CODE bool_t try_boot_sys_node(cpu_id_t cpu_id)
             &boot_state.mem_p_regs,
             boot_state.ui_info,
             boot_mem_reuse_p_reg,
-            /* parameters below not modeled in abstract specification */
+            /* parameters below not modelled in abstract specification */
             boot_state.num_drhu,
             boot_state.drhu_list,
             &boot_state.rmrr_list,
@@ -196,6 +196,11 @@ static BOOT_CODE bool_t try_boot_sys_node(cpu_id_t cpu_id)
 
 static BOOT_CODE bool_t add_mem_p_regs(p_region_t reg)
 {
+    if (reg.start == reg.end) {
+        // Return true here if asked to add an empty region.
+        // Some of the callers round down the end address to
+        return true;
+    }
     if (reg.end > PADDR_TOP && reg.start > PADDR_TOP) {
         /* Return true here as it's not an error for there to exist memory outside the kernel window,
          * we're just going to ignore it and leave it to be given out as device memory */
@@ -233,10 +238,11 @@ static BOOT_CODE bool_t parse_mem_map(uint32_t mmap_length, uint32_t mmap_addr)
             printf("\tPhysical memory region not addressable\n");
         } else {
             printf("\tPhysical Memory Region from %lx size %lx type %d\n", (long)mem_start, (long)mem_length, type);
-            if (type == MULTIBOOT_MMAP_USEABLE_TYPE && mem_start >= HIGHMEM_PADDR) {
+            if (type == MULTIBOOT_MMAP_USEABLE_TYPE && mem_start >= HIGHMEM_PADDR && mem_length >= BIT(PAGE_BITS)) {
+
                 if (!add_mem_p_regs((p_region_t) {
-                mem_start, mem_start + mem_length
-            })) {
+                ROUND_UP(mem_start, PAGE_BITS), ROUND_DOWN(mem_start + mem_length, PAGE_BITS),
+                })) {
                     return false;
                 }
             }
@@ -270,6 +276,7 @@ static BOOT_CODE bool_t is_compiled_for_microarchitecture(void)
     switch (model_info->model) {
     case SKYLAKE_1_MODEL_ID:
     case SKYLAKE_2_MODEL_ID:
+    case SKYLAKE_X_MODEL_ID:
         if (microarch_generation > 7) {
             return false;
         }

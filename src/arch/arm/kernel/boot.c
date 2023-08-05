@@ -181,7 +181,7 @@ BOOT_CODE static bool_t init_cpu(void)
     }
 #endif
 
-    activate_global_pd();
+    activate_kernel_vspace();
     if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
         vcpu_boot_init();
     }
@@ -222,7 +222,7 @@ BOOT_CODE static bool_t init_cpu(void)
             return false;
         }
     } else {
-        printf("Platform claims to have FP hardware, but does not!");
+        printf("Platform claims to have FP hardware, but does not!\n");
         return false;
     }
 #endif /* CONFIG_HAVE_FPU */
@@ -276,6 +276,7 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
 #endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */
     NODE_LOCK_SYS;
 
+    clock_sync_test();
     ksNumCPUs++;
 
     init_core_state(SchedulerAction_ResumeCurrentThread);
@@ -285,28 +286,33 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
 
 BOOT_CODE static void release_secondary_cpus(void)
 {
-
     /* release the cpus at the same time */
     node_boot_lock = 1;
 
-#ifndef CONFIG_ARCH_AARCH64
-    /* At this point in time the other CPUs do *not* have the seL4 global pd set.
-     * However, they still have a PD from the elfloader (which is mapping memory
-     * as strongly ordered uncached, as a result we need to explicitly clean
-     * the cache for it to see the update of node_boot_lock
+    /*
+     * At this point in time the primary core (executing this code) already uses
+     * the seL4 MMU/cache setup. However, the secondary cores are still using
+     * the elfloader's MMU/cache setup, and thus any memory updates may not
+     * be visible there.
      *
-     * For ARMv8, the elfloader sets the page table entries as inner shareable
-     * (so is the attribute of the seL4 global PD) when SMP is enabled, and
-     * turns on the cache. Thus, we do not need to clean and invalidate the cache.
+     * On AARCH64, both elfloader and seL4 map memory inner shareable and have
+     * the caches enabled, so no explicit cache maintenance is necessary.
+     *
+     * On AARCH32 the elfloader uses strongly ordered uncached memory, but seL4
+     * has caching enabled, thus explicit cache cleaning is required.
      */
+#ifdef CONFIG_ARCH_AARCH32
     cleanInvalidateL1Caches();
     plat_cleanInvalidateL2Cache();
 #endif
 
     /* Wait until all the secondary cores are done initialising */
     while (ksNumCPUs != CONFIG_MAX_NUM_NODES) {
-        /* perform a memory release+acquire to get new values of ksNumCPUs */
-        __atomic_signal_fence(__ATOMIC_ACQ_REL);
+#ifdef ENABLE_SMP_CLOCK_SYNC_TEST_ON_BOOT
+        NODE_STATE(ksCurTime) = getCurrentTime();
+#endif
+        /* perform a memory acquire to get new values of ksNumCPUs, release for ksCurTime */
+        __atomic_thread_fence(__ATOMIC_ACQ_REL);
     }
 }
 #endif /* ENABLE_SMP_SUPPORT */
@@ -541,10 +547,7 @@ static BOOT_CODE bool_t try_init_kernel(
 #endif
 
     /* create the idle thread */
-    if (!create_idle_thread()) {
-        printf("ERROR: could not create idle thread\n");
-        return false;
-    }
+    create_idle_thread();
 
     /* Before creating the initial thread (which also switches to it)
      * we clean the cache so that any page table information written

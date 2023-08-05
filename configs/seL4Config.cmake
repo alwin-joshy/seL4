@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
 
+set(KERNEL_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
+
 #
 # Architecture selection
 #
@@ -13,8 +15,8 @@ set(asm_sources "")
 set(bf_declarations "")
 set(KernelDTSList "")
 
-include(${CMAKE_CURRENT_LIST_DIR}/../tools/internal.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/../tools/helpers.cmake)
+include(${KERNEL_ROOT_DIR}/tools/internal.cmake)
+include(${KERNEL_ROOT_DIR}/tools/helpers.cmake)
 
 # Create and set all of the Kernel config options that can be derived from the
 # seL4 arch which is one of the following:
@@ -60,6 +62,8 @@ macro(declare_seL4_arch sel4_arch)
         config_set(KernelWordSize WORD_SIZE 64)
         set(Kernel64 ON CACHE INTERNAL "")
         set(Kernel32 OFF CACHE INTERNAL "")
+    else()
+        message(FATAL_ERROR "unsupported seL4 architecture: '${sel4_arch}'")
     endif()
 
 endmacro()
@@ -118,7 +122,7 @@ macro(declare_default_headers)
     cmake_parse_arguments(
         CONFIGURE
         ""
-        "TIMER_FREQUENCY;MAX_IRQ;NUM_PPI;PLIC_MAX_NUM_INT;INTERRUPT_CONTROLLER;TIMER;SMMU;CLK_SHIFT;CLK_MAGIC;KERNEL_WCET;TIMER_PRECISION;MAX_SID;MAX_CB"
+        "TIMER_FREQUENCY;MAX_IRQ;NUM_PPI;PLIC_MAX_NUM_INT;INTERRUPT_CONTROLLER;TIMER;SMMU;CLK_SHIFT;CLK_MAGIC;KERNEL_WCET;TIMER_PRECISION;TIMER_OVERHEAD_TICKS;MAX_SID;MAX_CB"
         ""
         ${ARGN}
     )
@@ -143,7 +147,6 @@ foreach(
     KernelArchArmV7a
     KernelArchArmV7ve
     KernelArchArmV8a
-    KernelArmSMMU
     KernelAArch64SErrorIgnore
 )
     unset(${var} CACHE)
@@ -157,7 +160,7 @@ unset(KernelArmArmV CACHE)
 # Blacklist platforms without MCS support
 set(KernelPlatformSupportsMCS ON)
 
-file(GLOB result ${CMAKE_CURRENT_LIST_DIR}/../src/plat/*/config.cmake)
+file(GLOB result ${KERNEL_ROOT_DIR}/src/plat/*/config.cmake)
 list(SORT result)
 
 foreach(file ${result})
@@ -191,7 +194,6 @@ config_set(KernelArmCortexA72 ARM_CORTEX_A72 "${KernelArmCortexA72}")
 config_set(KernelArchArmV7a ARCH_ARM_V7A "${KernelArchArmV7a}")
 config_set(KernelArchArmV7ve ARCH_ARM_V7VE "${KernelArchArmV7ve}")
 config_set(KernelArchArmV8a ARCH_ARM_V8A "${KernelArchArmV8a}")
-config_set(KernelArmSMMU ARM_SMMU "${KernelArmSMMU}")
 config_set(KernelAArch64SErrorIgnore AARCH64_SERROR_IGNORE "${KernelAArch64SErrorIgnore}")
 
 # Check for v7ve before v7a as v7ve is a superset and we want to set the
@@ -241,9 +243,7 @@ if(
         set(cross_prefix $CACHE{CROSS_COMPILER_PREFIX})
     endif()
 
-    configure_file(
-        "${CMAKE_CURRENT_LIST_DIR}/../${toolchain_file}" "${toolchain_outputfile}.temp" @ONLY
-    )
+    configure_file("${KERNEL_ROOT_DIR}/${toolchain_file}" "${toolchain_outputfile}.temp" @ONLY)
     if(EXISTS "${toolchain_outputfile}")
         file(READ "${toolchain_outputfile}.temp" filea)
         file(READ "${toolchain_outputfile}" fileb)

@@ -13,6 +13,7 @@
 #include <mode/kernel/vspace.h>
 
 #define IT_ASID 1 /* initial thread's ASID */
+#define MAX_BATCH 32 /* The maximum number of capabilities to operate on in a batch operation */
 
 cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_reg);
 cap_t create_unmapped_it_frame_cap(pptr_t pptr, bool_t use_large);
@@ -21,7 +22,7 @@ cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vptr, asid_t 
 
 void map_kernel_window(void);
 void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_rights, vm_attributes_t vm_attributes);
-void activate_global_pd(void);
+void activate_kernel_vspace(void);
 void write_it_asid_pool(cap_t it_ap_cap, cap_t it_pd_cap);
 
 /* ==================== BOOT CODE FINISHES HERE ==================== */
@@ -40,7 +41,7 @@ vm_rights_t CONST maskVMRights(vm_rights_t vm_rights,
                                seL4_CapRights_t cap_rights_mask);
 
 exception_t decodeARMMMUInvocation(word_t invLabel, word_t length, cptr_t cptr,
-                                   cte_t *cte, cap_t cap, word_t *buffer);
+                                   cte_t *cte, cap_t cap, bool_t call, word_t *buffer);
 
 #ifdef CONFIG_PRINTING
 void Arch_userStackTrace(tcb_t *tptr);

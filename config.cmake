@@ -74,6 +74,9 @@ if(DEFINED CALLED_declare_default_headers)
     if(NOT DEFINED CONFIGURE_TIMER_PRECISION)
         set(CONFIGURE_TIMER_PRECISION "0")
     endif()
+    if(NOT DEFINED CONFIGURE_TIMER_OVERHEAD_TICKS)
+        set(CONFIGURE_TIMER_OVERHEAD_TICKS "0")
+    endif()
     configure_file(
         src/arch/${KernelArch}/platform_gen.h.in
         ${CMAKE_CURRENT_BINARY_DIR}/gen_headers/plat/platform_gen.h @ONLY
@@ -88,6 +91,18 @@ set(KernelSetTLSBaseSelf OFF)
 include(src/arch/${KernelArch}/config.cmake)
 include(include/${KernelWordSize}/mode/config.cmake)
 include(src/config.cmake)
+
+set(KernelCustomDTS "" CACHE FILEPATH "Provide a device tree file to use instead of the \
+KernelPlatform's defaults")
+
+if(NOT "${KernelCustomDTS}" STREQUAL "")
+    if(NOT EXISTS ${KernelCustomDTS})
+        message(FATAL_ERROR "Can't open external dts file '${KernelCustomDTS}'!")
+    endif()
+    # Override list to hold only custom dts
+    set(KernelDTSList "${KernelCustomDTS}")
+    message(STATUS "Using custom ${KernelCustomDTS} device tree, ignoring default dts and overlays")
+endif()
 
 if(DEFINED KernelDTSList AND (NOT "${KernelDTSList}" STREQUAL ""))
     set(KernelDTSIntermediate "${CMAKE_CURRENT_BINARY_DIR}/kernel.dts")
@@ -266,10 +281,23 @@ config_string(
 )
 config_option(KernelFastpath FASTPATH "Enable IPC fastpath" DEFAULT ON)
 
+config_option(
+    KernelExceptionFastpath EXCEPTION_FASTPATH "Enable exception fastpath"
+    DEFAULT OFF
+    DEPENDS "NOT KernelVerificationBuild; KernelSel4ArchAarch64"
+)
+
 config_string(
     KernelNumDomains NUM_DOMAINS "The number of scheduler domains in the system"
     DEFAULT 1
     UNQUOTE
+)
+
+config_option(
+    KernelSignalFastpath SIGNAL_FASTPATH "Enable notification signal fastpath"
+    DEFAULT OFF
+    DEPENDS "KernelIsMCS; KernelFastpath; KernelSel4ArchAarch64; NOT KernelVerificationBuild"
+    DEFAULT_DISABLED OFF
 )
 
 find_file(
@@ -330,6 +358,15 @@ config_option(
     would compromise the verification story of the kernel. Enabling this option does NOT\
     imply you are using a verified kernel."
     DEFAULT ON
+)
+
+config_option(
+    KernelBinaryVerificationBuild BINARY_VERIFICATION_BUILD
+    "When enabled, this configuration option restricts the use of other options that would \
+     interfere with binary verification. For example, it will disable some inter-procedural \
+     optimisations. Enabling this options does NOT imply that you are using a verified kernel."
+    DEFAULT OFF
+    DEPENDS "KernelVerificationBuild"
 )
 
 config_option(
@@ -445,10 +482,25 @@ config_choice(
 )
 
 config_option(
+    KernelOptimisationCloneFunctions KERNEL_OPTIMISATION_CLONE_FUNCTIONS
+    "If enabled, allow inter-procedural optimisations that can generate cloned or partial \
+     functions, according to the coarse optimisation setting (KernelOptimisation). \
+     By default, these optimisations are present at -O2 and higher. \
+     If disabled, prevent those optimisations, regardless of the coarse optimisation setting. \
+     The main use of this option is to disable cloned and partial functions when performing \
+     binary verification at -O2. \
+     This currently only affects GCC builds."
+    DEFAULT ON
+    DEPENDS "NOT KernelBinaryVerificationBuild"
+    DEFAULT_DISABLED OFF
+)
+
+config_option(
     KernelFWholeProgram KERNEL_FWHOLE_PROGRAM
     "Enable -fwhole-program when linking kernel. This should work modulo gcc bugs, which \
     are not uncommon with -fwhole-program. Consider this feature experimental!"
     DEFAULT OFF
+    DEPENDS "NOT KernelBinaryVerificationBuild"
 )
 
 config_option(
