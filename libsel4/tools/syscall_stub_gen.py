@@ -198,6 +198,16 @@ class StructType(Type):
         assert self.pass_by_reference()
         return "%s->%s" % (var_name, member_name[word_num])
 
+# class ArrayType(Type):
+#     """
+#     A pass-by-value array
+#     """
+
+#     def __init__(self, name, size_bits, word_size):
+#         Type.__init__(self, name, size_bits, word_size)
+
+#     def c_expression(self, var_name, word_num):
+#         return "%s[%d]" % var_name, word_num
 
 class BitFieldType(Type):
     """
@@ -294,6 +304,7 @@ def init_arch_types(wordsize, args):
             CapType("seL4_ARM_VCPU", wordsize),
             CapType("seL4_ARM_IOSpace", wordsize),
             CapType("seL4_ARM_IOPageTable", wordsize),
+            StructType("seL4_CapSet", wordsize * 33, wordsize),
             StructType("seL4_UserContext", wordsize * 36, wordsize),
         ] + arm_smmu,
 

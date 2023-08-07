@@ -44,6 +44,41 @@
         <member name="tpidr_el0"/>
         <member name="tpidrro_el0"/>
     </struct>
+    <struct name="seL4_CapSet">
+        <member name="c0"/>
+        <member name="c1"/>
+        <member name="c2"/>
+        <member name="c3"/>
+        <member name="c4"/>
+        <member name="c5"/>
+        <member name="c6"/>
+        <member name="c7"/>
+        <member name="c8"/>
+        <member name="c9"/>
+        <member name="c10"/>
+        <member name="c11"/>
+        <member name="c12"/>
+        <member name="c13"/>
+        <member name="c14"/>
+        <member name="c15"/>
+        <member name="c16"/>
+        <member name="c17"/>
+        <member name="c18"/>
+        <member name="c19"/>
+        <member name="c20"/>
+        <member name="c21"/>
+        <member name="c22"/>
+        <member name="c23"/>
+        <member name="c24"/>
+        <member name="c25"/>
+        <member name="c26"/>
+        <member name="c27"/>
+        <member name="c28"/>
+        <member name="c29"/>
+        <member name="c30"/>
+        <member name="c31"/>
+        <member name="num"/>
+    </struct>
     <interface name="seL4_ARM_VSpace" manual_name="Page Global Directory"
         cap_description="Capability to the top level translation table being operated on.">
         <method id="ARMVSpaceClean_Data" name="Clean_Data" manual_label="vspace_clean"
@@ -214,14 +249,9 @@
             <description>
                  <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>
-            <param dir="in" name="start_cptr" type="seL4_Word">
+            <param dir="in" name="cap_set" type="seL4_CapSet">
                 <description>
-                   CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
-                </description>
-            </param>
-            <param dir="in" name="num_frames" type="seL4_Uint32">
-                <description>
-                    The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
+                   Set of capabilities to unmap in this invocation
                 </description>
             </param>
             <param dir="in" name="rights" type="seL4_CapRights_t">
@@ -262,14 +292,9 @@
             <description>
                  <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>
-            <param dir="in" name="start_cptr" type="seL4_Word">
+            <param dir="in" name="cap_set" type="seL4_CapSet">
                 <description>
-                   CPtr to the first frame cap to remap. Each of the subsequent frame caps which are to be remapped should be consecutive to this one.
-                </description>
-            </param>
-            <param dir="in" name="num_frames" type="seL4_Uint32">
-                <description>
-                    The number of consecutive frames, beginning at <texttt text="start"/>, that should be remapped (max of 32)
+                   Set of capabilities to unmap in this invocation
                 </description>
             </param>
             <param dir="out" name="unmapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
