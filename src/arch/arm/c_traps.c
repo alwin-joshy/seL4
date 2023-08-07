@@ -49,10 +49,16 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
         /* Check if we hit a software breakpoint */
         kgdb_handle_debug_fault(DEBUG_SW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
         kgdb_handler();
+        restore_user_context();
     } else if (((getESR() >> 0x1A) & 0x3F) == 0x30) {
         /* Check if we hit a hardware breakpoint */
         kgdb_handle_debug_fault(DEBUG_HW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
         kgdb_handler();
+        restore_user_context();
+    } else if (((getESR() >> 0x1A) & 0x3F) == 0x32) {
+        kgdb_handle_debug_fault(DEBUG_SS, getRestartPC(NODE_STATE(ksCurThread)));
+        kgdb_handler();
+        restore_user_context();
     }
 #endif /* CONFIG_GDB */
 

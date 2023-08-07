@@ -1920,8 +1920,9 @@ writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vadd
     offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
     kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
     addr = (uint32_t *)(kernel_vaddr + offset);
-
     *addr = value;
+
+    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 4, lookup_frame_ret.frameBase + offset);
     ret.status = EXCEPTION_NONE;
     return ret;
 }
@@ -1946,6 +1947,8 @@ writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_
     addr = (word_t *)(kernel_vaddr + offset);
 
     *addr = value;
+    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 8, lookup_frame_ret.frameBase + offset);
+
     ret.status = EXCEPTION_NONE;
     return ret;
 }

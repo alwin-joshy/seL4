@@ -40,6 +40,10 @@ sw_break_t software_breakpoints[MAX_SW_BREAKS] = {0};
 #define DBGBVR_VA   0x1FFFFFFFFFFFC
 
 #define MDSCR_MDE   (1 << 15)
+#define MDSCR_SS   (1)
+
+#define SPSR_SS (1 << 21)
+
 
 typedef struct hw_breakpoint {
     uint64_t addr;
@@ -382,10 +386,10 @@ static bool_t parse_breakpoint_format(char *ptr, seL4_Word *addr, seL4_Word *kin
 
 void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr)
 {
-    if (type == 0) {
+    if (type == DEBUG_SW_BREAK) {
         mystrcpy(kgdb_out, "T05swbreak:;", 13);
         kgdb_put_packet(kgdb_out);
-    } else {
+    } else if (type == DEBUG_HW_BREAK || type == DEBUG_SS) {
         mystrcpy(kgdb_out, "T05hwbreak:;", 13);
         kgdb_put_packet(kgdb_out);
     }
@@ -417,6 +421,7 @@ static bool_t aarch64_instruction_write(seL4_Word addr, uint32_t instr)
 static UNUSED bool_t set_software_breakpoint(seL4_Word addr)
 {
     sw_break_t tmp;
+    tmp.addr = addr;
 
     if (!aarch64_instruction_read(addr, &tmp.orig_instr)) {
         return false;
@@ -489,6 +494,34 @@ static void set_dbgbcr(int breakpoint_num) {
     }
 }
 
+static void unset_dbgbcr(int breakpoint_num) {
+    word_t dbgbcr_val = 0;
+
+    switch (breakpoint_num) {
+        case 0 : MRS("DBGBCR0_EL1", dbgbcr_val); break;
+        case 1 : MRS("DBGBCR1_EL1", dbgbcr_val); break;
+        case 2 : MRS("DBGBCR2_EL1", dbgbcr_val); break;
+        case 3 : MRS("DBGBCR3_EL1", dbgbcr_val); break;
+        case 4 : MRS("DBGBCR4_EL1", dbgbcr_val); break;
+        case 5 : MRS("DBGBCR5_EL1", dbgbcr_val); break;
+        default : assert(0);
+    }
+
+    /* Disable the breakpoint */
+    dbgbcr_val = dbgbcr_val & ~DBGBCR_EN;
+
+    switch (breakpoint_num) {
+        case 0 : MSR("DBGBCR0_EL1", dbgbcr_val); break;
+        case 1 : MSR("DBGBCR1_EL1", dbgbcr_val); break;
+        case 2 : MSR("DBGBCR2_EL1", dbgbcr_val); break;
+        case 3 : MSR("DBGBCR3_EL1", dbgbcr_val); break;
+        case 4 : MSR("DBGBCR4_EL1", dbgbcr_val); break;
+        case 5 : MSR("DBGBCR5_EL1", dbgbcr_val); break;
+        default : assert(0);
+    }
+}
+
+
 static void set_dbgbvr(int breakpoint_num, seL4_Word addr) {
     word_t dbgbvr_val = 0;
 
@@ -550,6 +583,51 @@ static bool_t set_hardware_breakpoint(seL4_Word addr) {
     return true;
 }
 
+static bool_t unset_hardware_breakpoint(seL4_Word addr) {
+    int i = 0;
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        if (hardware_breakpoints[i].addr == addr) break;
+    }
+
+    if (i == seL4_NumExclusiveBreakpoints) return false;
+
+    unset_dbgbcr(i);
+
+    return true;
+}
+
+static bool_t enable_single_step(void) {
+    word_t mdscr = 0;
+    MRS("MDSCR_EL1", mdscr);
+    mdscr = (mdscr | MDSCR_MDE);
+    mdscr = (mdscr | MDSCR_SS);
+    MSR("MDSCR_EL1", mdscr);
+
+    /* Ensure that OS lock and double lock are unset */
+    word_t osdlar = 0;
+    MSR("osdlr_el1", osdlar);
+    word_t oslar = 0;
+    MSR("oslar_el1", oslar);
+
+    seL4_Word reg = getRegister(NODE_STATE(ksCurThread), SPSR_EL1);
+    reg = reg | SPSR_SS;
+    setRegister(NODE_STATE(ksCurThread), SPSR_EL1, reg);
+
+    return true; 
+}
+
+static bool_t disable_single_step(void) {
+    word_t mdscr = 0;
+    MRS("MDSCR_EL1", mdscr);
+    mdscr = (mdscr & ~MDSCR_SS);
+    MSR("MDSCR_EL1", mdscr);
+
+    seL4_Word reg = getRegister(NODE_STATE(ksCurThread), SPSR_EL1);
+    reg = (reg & ~SPSR_SS);
+    setRegister(NODE_STATE(ksCurThread), SPSR_EL1, reg);
+    return true; 
+}
+
 void kgdb_handler(void)
 {
     char *ptr;
@@ -601,6 +679,12 @@ void kgdb_handler(void)
             ptr++;
             (void) stepping;
 
+            if (stepping) {
+                enable_single_step();
+            } else {
+                disable_single_step();
+            }
+
             /* TODO: Support continue from an address and single step */
             // if (sscanf(ptr, "%x", &addr))
             // current_task->regs.eip = addr;
@@ -650,8 +734,9 @@ void kgdb_handler(void)
                 }
                 if (!set_software_breakpoint(addr)) {
                     mystrcpy(kgdb_out, "E01", 4);
+                } else {
+                    mystrcpy(kgdb_out, "OK", 3);
                 }
-                mystrcpy(kgdb_out, "OK", 3);            
             } else if (strncmp(ptr, "z0", 2) == 0) {
                 /* Unset a software breakpoint */
                 if (!parse_breakpoint_format(ptr, &addr, &size)) {
@@ -659,8 +744,9 @@ void kgdb_handler(void)
                 }
                 if (!unset_software_breakpoint(addr)) {
                     mystrcpy(kgdb_out, "E01", 4);
+                } else {
+                    mystrcpy(kgdb_out, "OK", 3);
                 }
-                mystrcpy(kgdb_out, "OK", 3);            
             } else if (strncmp(ptr, "Z1", 2) == 0) {
                 /* Set a hardware breakpoint */
                 if (!parse_breakpoint_format(ptr, &addr, &size)) {
@@ -668,16 +754,19 @@ void kgdb_handler(void)
                 }
                 if (!set_hardware_breakpoint(addr)) {
                     mystrcpy(kgdb_out, "E01", 4);
+                } else {
+                    mystrcpy(kgdb_out, "OK", 3);
                 }
-                mystrcpy(kgdb_out, "OK", 3);
+            } else if (strncmp(ptr, "z1", 2) == 0) {
+                if (!parse_breakpoint_format(ptr, &addr, &size)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                }
+                if (!unset_hardware_breakpoint(addr)) {
+                    mystrcpy(kgdb_out, "E01", 4);
+                } else {
+                    mystrcpy(kgdb_out, "OK", 3);
+                }
             }
-            // if (strncmp(ptr, "Z1", 2) == 0) {
-            //     /* set hardware breakpoint */
-            //     parse_breakpoint_format()
-
-            // } else if (strncmp(ptr, "z1", 2) == 0) {
-            //     /* Unset hardware breakpoint */
-            // }
         }
 
         kgdb_put_packet(kgdb_out);

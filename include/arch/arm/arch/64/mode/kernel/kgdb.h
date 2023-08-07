@@ -10,7 +10,8 @@
 
 typedef enum debug_exception {
     DEBUG_SW_BREAK = 0,
-    DEBUG_HW_BREAK = 1
+    DEBUG_HW_BREAK = 1,
+    DEBUG_SS = 3
 } debug_exception_t;
 
 typedef struct register_set {
