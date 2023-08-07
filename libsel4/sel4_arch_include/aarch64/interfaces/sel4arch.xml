@@ -249,9 +249,14 @@
             <description>
                  <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>
-            <param dir="in" name="cap_set" type="seL4_CapSet">
-                <description>
+            <param dir="in" name="cap_set" type="seL4_Word[]" size="32">
+               <description>
                    Set of capabilities to unmap in this invocation
+                </description> 
+            </param>
+            <param dir="in" name="num" type="seL4_Word">
+                <description>
+                   The number of caps to operate on
                 </description>
             </param>
             <param dir="in" name="rights" type="seL4_CapRights_t">
@@ -292,9 +297,14 @@
             <description>
                  <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>
-            <param dir="in" name="cap_set" type="seL4_CapSet">
+            <param dir="in" name="cap_set" type="seL4_Word[]" size="32">
                 <description>
                    Set of capabilities to unmap in this invocation
+                </description>
+            </param>
+            <param dir="in" name="num" type="seL4_Word">
+                <description>
+                   The number of caps to operate on
                 </description>
             </param>
             <param dir="out" name="unmapped" type="seL4_Uint32" description="Bitmap of the capabilites that were affected i.e. 1st bit is set if mapping related to 1st cap is changed" />
