@@ -22,3 +22,12 @@ typedef struct seL4_UserContext_ {
     /* Thread ID registers */
     seL4_Word tpidr_el0, tpidrro_el0;
 } seL4_UserContext;
+
+typedef struct seL4_CapSet_ {
+    /* cptrs */
+    seL4_Word c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18,
+              c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29, c30, c31;
+
+    /* Number of capabilities passed in */
+    seL4_Word num;
+} seL4_CapSet;

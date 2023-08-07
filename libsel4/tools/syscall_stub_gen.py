@@ -95,7 +95,7 @@ class Type(object):
     pointer.
     """
 
-    def __init__(self, name, size_bits, wordsize, double_word=False, native_size_bits=None):
+    def __init__(self, name, size_bits, wordsize, double_word=False, native_size_bits=None, num_elems=1):
         """
         Define a new type, named 'name' that is 'size_bits' bits
         long.
@@ -125,7 +125,7 @@ class Type(object):
         """
         Return a string of C code that would be used in a function
         parameter declaration.
-        """
+        """   
         return "%s %s" % (self.name, name)
 
     def pointer(self):
@@ -173,6 +173,22 @@ class PointerType(Type):
     def pointer(self):
         raise NotImplementedError()
 
+class ArrayType(Type):
+    """
+    An array of a standard type.
+    """
+
+    def __init__(self, name, size_bits, wordsize):
+        Type.__init__(self, name, size_bits, wordsize)
+
+    def set_size(self, num_elems):
+        self.num_elems = num_elems;
+
+    def render_parameter_name(self, name):
+        return "%s %s[%d]" % (self.name[ : -2], name, self.num_elems)
+
+    def c_expression(self, var_name, word_num):
+        return "%s[%d]" % (var_name, word_num)
 
 class CapType(Type):
     """
@@ -197,7 +213,6 @@ class StructType(Type):
         # Multiword structure.
         assert self.pass_by_reference()
         return "%s->%s" % (var_name, member_name[word_num])
-
 
 class BitFieldType(Type):
     """
@@ -241,6 +256,9 @@ def init_data_types(wordsize):
         Type("seL4_Time", 64, wordsize, double_word=(wordsize == 32)),
         Type("seL4_Word", wordsize, wordsize),
         Type("seL4_Bool", 1, wordsize, native_size_bits=8),
+
+        # Array types
+        ArrayType("seL4_Word[]", wordsize, wordsize),
 
         # seL4 Structures
         BitFieldType("seL4_CapRights_t", wordsize, wordsize),
@@ -294,6 +312,7 @@ def init_arch_types(wordsize, args):
             CapType("seL4_ARM_VCPU", wordsize),
             CapType("seL4_ARM_IOSpace", wordsize),
             CapType("seL4_ARM_IOPageTable", wordsize),
+            StructType("seL4_CapSet", wordsize * 33, wordsize),
             StructType("seL4_UserContext", wordsize * 36, wordsize),
         ] + arm_smmu,
 
@@ -407,6 +426,9 @@ def get_parameter_positions(parameters, wordsize):
         # How big are we?
         type_size = param.type.size_bits
 
+        if (isinstance(param.type, ArrayType)):
+            type_size *= param.type.num_elems
+
         # We need everything to be a power of two, or word sized.
         assert ((type_size & (type_size - 1)) == 0) or (type_size % wordsize == 0)
 
@@ -456,6 +478,12 @@ def generate_marshal_expressions(params, num_mrs, structs, wordsize):
 
         target_word = first_bit // wordsize
         target_offset = first_bit % wordsize
+
+        if isinstance(param.type, ArrayType):
+            for i in range(param.type.num_elems):
+                expr = param.type.c_expression(param.name, i)
+                word_array[target_word + i].append(expr)
+            return
 
         # double word type
         if param.type.double_word:
@@ -905,6 +933,8 @@ def parse_xml_file(input_file, valid_types):
             for param in method.getElementsByTagName("param"):
                 param_name = param.getAttribute("name")
                 param_type = type_names.get(param.getAttribute("type"))
+                if (isinstance(param_type, ArrayType)):
+                    param_type.set_size(int(param.getAttribute("size")))
                 if not param_type:
                     raise Exception("Unknown type '%s'." % (param.getAttribute("type")))
                 param_dir = param.getAttribute("dir")
@@ -1010,7 +1040,8 @@ def generate_stub_file(arch, wordsize, input_files, output_file, use_only_ipc_bu
                 (sizeof(type) == expected_bytes) ? 1 : -1]
 """)
     for x in data_types + arch_types[arch]:
-        result.append("assert_size_correct(%s, %d);" % (x.name, x.native_size_bits / 8))
+        if (not isinstance(x, ArrayType)):
+            result.append("assert_size_correct(%s, %d);" % (x.name, x.native_size_bits / 8))
     result.append("")
 
     #

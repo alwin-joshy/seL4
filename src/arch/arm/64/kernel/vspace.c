@@ -6,6 +6,8 @@
 
 #include <config.h>
 #include <types.h>
+// #include <arch/types.h>
+// #include <sel4/arch/types.h>
 #include <benchmark/benchmark.h>
 #include <api/failures.h>
 #include <api/syscall.h>
@@ -1693,15 +1695,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
     switch (invLabel) {
     case ARMVspaceUnmap_Range:
     case ARMVspaceRemap_Range: {
-        seL4_CPtr start;
-        seL4_Uint32 num;
+        seL4_Word num = 0;
         seL4_Word rights_word = 0;
         asid_t asid, frame_asid;
         vspace_root_t *vspaceRoot;
         lookupCapAndSlot_ret_t lu_ret[MAX_BATCH];
 
         /* Check that the correct number of arguments was passed in */
-        if ((invLabel == ARMVspaceRemap_Range && length < 3) || (invLabel == ARMVspaceUnmap_Range && length < 2)) {
+        if ((invLabel == ARMVspaceRemap_Range && length < 34) || (invLabel == ARMVspaceUnmap_Range && length < 33)) {
             userError("VSpaceRoot Range Operation: Truncated message. Expected %d args, recieved %d args",
                       (invLabel == ARMVspaceRemap_Range) ? 3 : 2, length);
             current_syscall_error.type = seL4_TruncatedMessage;
@@ -1709,10 +1710,9 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
         }
 
         /* The first arg is a seL4_Word but should actually be a cptr. The reason the type is set to word it to avoid lookup in the syscall path */
-        start = getSyscallArg(0, buffer);
-        num = getSyscallArg(1, buffer);
+        num = getSyscallArg(32, buffer);
         if (invLabel == ARMVspaceRemap_Range) {
-            rights_word = getSyscallArg(2, buffer);
+            rights_word = getSyscallArg(33, buffer);
         }
 
         /* Ensure that num is in bounds */
@@ -1751,26 +1751,25 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
 
         /* Iterate through the caller's vspace and confirm the validity of all the caps
            in the range */
-
-        for (seL4_CPtr cptr = start; cptr < start + num; cptr++) {
-            uint8_t index = cptr - start;
+        for (int i = 0; i < num; i++) {
+            seL4_CPtr cptr = getSyscallArg(i, buffer);
             /* Check that there is a cap in the slot */
-            lu_ret[index] = lookupCapAndSlot(NODE_STATE(ksCurThread), cptr);
-            if (unlikely(lu_ret[index].status != EXCEPTION_NONE)) {
+            lu_ret[i] = lookupCapAndSlot(NODE_STATE(ksCurThread), cptr);
+            if (unlikely(lu_ret[i].status != EXCEPTION_NONE)) {
                 userError("VSpaceRoot Range Operation: Capability lookup of %lu failed", cptr);
                 current_syscall_error.type = seL4_FailedLookup;
                 return EXCEPTION_SYSCALL_ERROR;
             }
 
             /* Check that the cap is a frame cap */
-            if (cap_get_capType(lu_ret[index].cap) != cap_frame_cap) {
+            if (cap_get_capType(lu_ret[i].cap) != cap_frame_cap) {
                 userError("VSpaceRoot Remap Range: %lu is not a frame cap", cptr);
                 current_syscall_error.type = seL4_FailedLookup;
                 return EXCEPTION_SYSCALL_ERROR;
             }
 
             /* Check that the frame cap is mapped into the invoked vspace */
-            frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&lu_ret[index].cap);
+            frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&lu_ret[i].cap);
             if (frame_asid != asid) {
                 userError("VSpaceRoot Range Operation: %lu is not mapped to this vspace", cptr);
                 current_syscall_error.type = seL4_InvalidCapability;
