@@ -18,6 +18,7 @@ add_sources(
         src/kernel/cspace.c
         src/kernel/faulthandler.c
         src/kernel/thread.c
+        src/kgdb/kgdb.c
         src/kernel/boot.c
         src/kernel/stack.c
         src/object/notification.c

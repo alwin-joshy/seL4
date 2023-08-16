@@ -15,7 +15,7 @@
 #include <benchmark/benchmark_track.h>
 #include <benchmark/benchmark_utilisation.h>
 #ifdef CONFIG_GDB
-#include <mode/kernel/kgdb.h>
+#include <kgdb/kgdb.h>
 #endif /* CONFIG_GDB */
 #include <arch/machine.h>
 

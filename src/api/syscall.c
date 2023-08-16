@@ -25,7 +25,7 @@
 #include <kernel/traps.h>
 #include <arch/machine.h>
 #ifdef CONFIG_GDB
-#include <mode/kernel/kgdb.h>
+#include <kgdb/kgdb.h>
 #endif
 #ifdef ENABLE_SMP_SUPPORT
 #include <smp/ipi.h>

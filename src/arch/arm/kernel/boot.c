@@ -23,7 +23,6 @@
 #include <arch/machine/timer.h>
 #include <arch/machine/fpu.h>
 #include <arch/machine/tlb.h>
-#include <mode/kernel/kgdb.h>
 
 #ifdef CONFIG_ARM_SMMU
 #include <drivers/smmu/smmuv2.h>

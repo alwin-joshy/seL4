@@ -401,7 +401,7 @@ config_option(
     KernelGdb GDB
     "Support GDB stubs in kernel-space."
     DEFAULT OFF
-    DEPENDS "NOT KernelVerificationBuild"
+    DEPENDS "NOT KernelVerificationBuild; KernelSel4ArchAarch64; KernelPrinting"
     DEFAULT_DISABLED OFF
 )
 
