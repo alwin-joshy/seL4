@@ -147,7 +147,7 @@ void buf2regs(register_set_t *regs)
 static bool_t instruction_read(seL4_Word addr, uint32_t *instr)
 {
     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-    vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
+    vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
     readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRoot, addr);
     if (ret.status) {
         return false;
@@ -159,7 +159,7 @@ static bool_t instruction_read(seL4_Word addr, uint32_t *instr)
 static bool_t instruction_write(seL4_Word addr, uint32_t instr)
 {
     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-    vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
+    vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
     writeHalfWordToVSpace_ret_t ret = writeHalfWordToVSpace(vspaceRoot, addr, instr);
     if (ret.status) {
         return false;

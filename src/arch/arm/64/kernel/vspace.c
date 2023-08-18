@@ -1385,24 +1385,10 @@ bool_t vaddrIsMapped(cap_t vspaceRootCap, vptr_t vaddr)
         return false;
     }
 
-    vspace_root_t *vspaceRoot = cap_vtable_root_get_basePtr(vspaceRootCap);
+    vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
+    lookupPTSlot_ret_t lookup_ret  = lookupPTSlot(vspaceRoot, vaddr);
 
-    lookupPTSlot_ret_t lu_ret_pt = lookupPTSlot(vspaceRoot, vaddr);
-    if (lu_ret_pt.status == EXCEPTION_NONE) {
-        return pte_ptr_get_present(lu_ret_pt.ptSlot);
-    }
-
-    lookupPDSlot_ret_t lu_ret_pd = lookupPDSlot(vspaceRoot, vaddr);
-    if (lu_ret_pd.status == EXCEPTION_NONE) {
-        return pde_pde_large_ptr_get_present(lu_ret_pd.pdSlot);
-    }
-
-    lookupPUDSlot_ret_t lu_ret_pud = lookupPUDSlot(vspaceRoot, vaddr);
-    if (lu_ret_pud.status == EXCEPTION_NONE) {
-        return pude_pude_1g_ptr_get_present(lu_ret_pud.pudSlot);
-    }
-
-    return false;
+    return (pte_ptr_get_valid(lookup_ret.ptSlot) && !(pte_pte_table_ptr_get_present(lookup_ret.ptSlot) && lookup_ret.ptBitsLeft > PAGE_BITS));
 }
 #endif /* CONFIG_GDB */
 
@@ -1844,29 +1830,26 @@ void kernelDataAbort(word_t pc)
 }
 #endif /* CONFIG_DEBUG_BUILD */
 
-#ifdef CONFIG_PRINTING
-// typedef struct readWordFromVSpace_ret {
-//     exception_t status;
-//     word_t value;
-// } readWordFromVSpace_ret_t;
+#ifdef CONFIG_GDB
 
 readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 {
-    lookupFrame_ret_t lookup_frame_ret;
     readHalfWordFromVSpace_ret_t ret;
     word_t offset;
     pptr_t kernel_vaddr;
     uint32_t *value;
 
-    lookup_frame_ret = lookupFrame(pd, vaddr);
+    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(pd, vaddr);
 
-    if (!lookup_frame_ret.valid) {
+    /* Check that the returned slot is a page. */
+    if (!pte_ptr_get_valid(lookup_ret.ptSlot) ||
+        (pte_pte_table_ptr_get_present(lookup_ret.ptSlot) && lookup_ret.ptBitsLeft > PAGE_BITS)) {
         ret.status = EXCEPTION_LOOKUP_FAULT;
         return ret;
     }
 
-    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
-    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
+    offset = vaddr & MASK(lookup_ret.ptBitsLeft);
+    kernel_vaddr = (word_t)paddr_to_pptr(pte_page_ptr_get_page_base_address(lookup_ret.ptSlot));
     value = (uint32_t *)(kernel_vaddr + offset);
 
     ret.status = EXCEPTION_NONE;
@@ -1874,7 +1857,41 @@ readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t va
     return ret;
 }
 
-readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
+writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value) {
+    writeHalfWordToVSpace_ret_t ret;
+    word_t offset;
+    pptr_t kernel_vaddr;
+    uint32_t *addr;
+
+    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(pd, vaddr);
+
+    /* Check that the returned slot is a page. */
+    if (!pte_ptr_get_valid(lookup_ret.ptSlot) ||
+        (pte_pte_table_ptr_get_present(lookup_ret.ptSlot) && lookup_ret.ptBitsLeft > PAGE_BITS)) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
+
+    offset = vaddr & MASK(lookup_ret.ptBitsLeft);
+    kernel_vaddr = (word_t)paddr_to_pptr(pte_page_ptr_get_page_base_address(lookup_ret.ptSlot));
+    addr = (uint32_t *)(kernel_vaddr + offset);
+    *addr = value;
+
+    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 4, pte_page_ptr_get_page_base_address(lookup_ret.ptSlot) + offset);
+    ret.status = EXCEPTION_NONE;
+    return ret;
+}
+
+#endif /* CONFIG_GDB */
+
+#ifdef CONFIG_PRINTING
+
+typedef struct readWordFromVSpace_ret {
+    exception_t status;
+    word_t value;
+} readWordFromVSpace_ret_t;
+
+static readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 {
     readWordFromVSpace_ret_t ret;
     word_t offset;
@@ -1896,60 +1913,6 @@ readWordFromVSpace_ret_t readWordFromVSpace(vspace_root_t *pd, word_t vaddr)
 
     ret.status = EXCEPTION_NONE;
     ret.value = *value;
-    return ret;
-}
-
-// typedef struct writeWordToVSpace_ret {
-//     exception_t status;
-// } writeWordToVSpace_ret_t;
-
-writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value) {
-    lookupFrame_ret_t lookup_frame_ret;
-    writeHalfWordToVSpace_ret_t ret;
-    word_t offset;
-    pptr_t kernel_vaddr;
-    uint32_t *addr;
-
-    lookup_frame_ret = lookupFrame(pd, vaddr);
-
-    if (!lookup_frame_ret.valid) {
-        ret.status = EXCEPTION_LOOKUP_FAULT;
-        return ret;
-    }
-
-    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
-    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
-    addr = (uint32_t *)(kernel_vaddr + offset);
-    *addr = value;
-
-    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 4, lookup_frame_ret.frameBase + offset);
-    ret.status = EXCEPTION_NONE;
-    return ret;
-}
-
-writeWordToVSpace_ret_t writeWordToVSpace(vspace_root_t *pd, word_t vaddr, word_t value)
-{
-    lookupFrame_ret_t lookup_frame_ret;
-    writeWordToVSpace_ret_t ret;
-    word_t offset;
-    pptr_t kernel_vaddr;
-    word_t *addr;
-
-    lookup_frame_ret = lookupFrame(pd, vaddr);
-
-    if (!lookup_frame_ret.valid) {
-        ret.status = EXCEPTION_LOOKUP_FAULT;
-        return ret;
-    }
-
-    offset = vaddr & MASK(pageBitsForSize(lookup_frame_ret.frameSize));
-    kernel_vaddr = (word_t)paddr_to_pptr(lookup_frame_ret.frameBase);
-    addr = (word_t *)(kernel_vaddr + offset);
-
-    *addr = value;
-    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 8, lookup_frame_ret.frameBase + offset);
-
-    ret.status = EXCEPTION_NONE;
     return ret;
 }
 
