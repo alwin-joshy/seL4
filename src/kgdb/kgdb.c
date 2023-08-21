@@ -349,6 +349,7 @@ static void handle_configure_debug_events(char *ptr) {
 
 void kgdb_handler(void)
 {
+    printf("Entering KGDB stub\n");
     char *ptr;
     while (1) {
         ptr = kgdb_get_packet();
