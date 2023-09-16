@@ -95,7 +95,7 @@ class Type(object):
     pointer.
     """
 
-    def __init__(self, name, size_bits, wordsize, double_word=False, native_size_bits=None, num_elems=1):
+    def __init__(self, name, size_bits, wordsize, double_word=False, native_size_bits=None, max_elems=1):
         """
         Define a new type, named 'name' that is 'size_bits' bits
         long.
@@ -181,11 +181,11 @@ class ArrayType(Type):
     def __init__(self, name, size_bits, wordsize):
         Type.__init__(self, name, size_bits, wordsize)
 
-    def set_size(self, num_elems):
-        self.num_elems = num_elems;
+    def set_size(self, max_elems):
+        self.max_elems = max_elems;
 
     def render_parameter_name(self, name):
-        return "%s %s[%d]" % (self.name[ : -2], name, self.num_elems)
+        return "%s *%s" % (self.name[ : -2], name)
 
     def c_expression(self, var_name, word_num):
         return "%s[%d]" % (var_name, word_num)
@@ -426,9 +426,6 @@ def get_parameter_positions(parameters, wordsize):
         # How big are we?
         type_size = param.type.size_bits
 
-        if (isinstance(param.type, ArrayType)):
-            type_size *= param.type.num_elems
-
         # We need everything to be a power of two, or word sized.
         assert ((type_size & (type_size - 1)) == 0) or (type_size % wordsize == 0)
 
@@ -478,12 +475,6 @@ def generate_marshal_expressions(params, num_mrs, structs, wordsize):
 
         target_word = first_bit // wordsize
         target_offset = first_bit % wordsize
-
-        if isinstance(param.type, ArrayType):
-            for i in range(param.type.num_elems):
-                expr = param.type.c_expression(param.name, i)
-                word_array[target_word + i].append(expr)
-            return
 
         # double word type
         if param.type.double_word:
@@ -635,10 +626,13 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
 
     # Split out cap parameters and standard parameters
     standard_params = []
+    array_params = []
     cap_params = []
     for x in input_params:
         if isinstance(x.type, CapType):
             cap_params.append(x)
+        elif isinstance(x.type, ArrayType):
+            array_params.append(x)
         else:
             standard_params.append(x)
 
@@ -687,8 +681,24 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
     # Setup variables we will need.
     #
     result.append("\t%s result;" % return_type)
-    result.append("\tseL4_MessageInfo_t tag = seL4_MessageInfo_new(%s, 0, %d, %d);" %
-                  (method_id, len(cap_expressions), len(input_expressions)))
+    
+    #
+    # Generate checks that sizes for arrays are less than the max sizes
+    #
+    array_size_expr = ""
+    if len(array_params) != 0:
+        padding = min(0, num_mrs - len(input_expressions));
+        if padding > 0:
+            array_size_expr = str(padding) + " "
+
+    for array in array_params:
+        # TODO: What should actually be returned here?
+        result.append("\tif (%s > %d) return result;" % (array.name + "_size", array.type.max_elems))
+        array_size_expr += ("+ %s" % (array.name + "_size"))
+
+
+    result.append("\tseL4_MessageInfo_t tag = seL4_MessageInfo_new(%s, 0, %d, %d %s);" %
+                  (method_id, len(cap_expressions), len(input_expressions), array_size_expr))
     result.append("\tseL4_MessageInfo_t output_tag;")
     for i in range(num_mrs):
         result.append("\tseL4_Word mr%d;" % i)
@@ -725,6 +735,18 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
         for i in range(num_mrs, len(input_expressions)):
             result.append("\tseL4_SetMR(%d, %s);" % (i, input_expressions[i]))
         result.append("")
+
+    #
+    # Copy in the array inputs 
+    #
+    start = str(len(input_expressions))
+    if int(start) < num_mrs:
+        start = str(num_mrs)
+
+    for array in array_params:
+        result.append("\tfor (int i = 0; i < %s; i++)" % (array.name + "_size"))
+        result.append("\t\tseL4_SetMR(%s, %s);" % (str(start) + " + i", array.name + "[i]"))
+        start += (" + %s" % (array.name + "_size")) 
 
     #
     # Generate the call.
@@ -930,18 +952,35 @@ def parse_xml_file(input_file, valid_types):
 
             comment_lines.append("@param[in] _service %s" % cap_description)
             output_params = []
+            observed_array = False
             for param in method.getElementsByTagName("param"):
                 param_name = param.getAttribute("name")
                 param_type = type_names.get(param.getAttribute("type"))
-                if (isinstance(param_type, ArrayType)):
-                    param_type.set_size(int(param.getAttribute("size")))
-                if not param_type:
-                    raise Exception("Unknown type '%s'." % (param.getAttribute("type")))
                 param_dir = param.getAttribute("dir")
                 assert (param_dir == "in") or (param_dir == "out")
+
+                if not param_type:
+                    raise Exception("Unknown type '%s'." % (param.getAttribute("type")))
+
+
+
+                if (isinstance(param_type, ArrayType)):
+                    size_params = list(filter(lambda x : (x.getAttribute("name") == param_name + "_size"), method.getElementsByTagName("param")))
+                    if len(size_params) != 1:
+                        raise Exception("Did not find unique definition of '%s'" % (param_name + "_size"))
+
+                    param_type.set_size(int(param.getAttribute("max_size")))
+
+                    if not observed_array:
+                        observed_array = True
+                elif observed_array == True and param_dir == "in":
+                    raise Exception("No non-array elements should come after an array " + method_name)
+
                 if param_dir == "in":
                     input_params.append(Parameter(param_name, param_type))
                 else:
+                    if (isinstance(param_type, ArrayType)):
+                        raise Exception("Array types cannot be output")
                     output_params.append(Parameter(param_name, param_type))
 
                 if param_dir == "in" or param_type.pass_by_reference():
