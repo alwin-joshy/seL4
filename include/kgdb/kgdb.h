@@ -11,5 +11,7 @@ typedef enum debug_exception {
 void kgdb_handler(void);
 void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr);
 void kgdb_send_debug_packet(char *buf, int len);
+void kgdb_start_thread(tcb_t *tcb);
+int kgdb_register_initial_thread(void);
 
 #endif /* CONFIG_GDB */

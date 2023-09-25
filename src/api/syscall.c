@@ -139,6 +139,29 @@ exception_t handleUnknownSyscall(word_t w)
         kgdb_handler();
         return EXCEPTION_NONE;
     }
+
+    if (w == SysDebugKGDBStartThread) {
+        word_t cptr = getRegister(NODE_STATE(ksCurThread), capRegister);
+
+        if (cptr == 0) {
+            int err = kgdb_register_initial_thread();
+            if (err) {
+                userError("Initial thread has already been registered\n");
+                halt();
+            }
+            return EXCEPTION_NONE;
+        }
+
+        lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(NODE_STATE(ksCurThread), cptr);
+        word_t cap_type = cap_get_capType(lu_ret.cap);
+        if (cap_type != cap_thread_cap) {
+            userError("SysDebugKGDBStartThread: cap is not a TCB, halting");
+            halt();
+        }
+
+        kgdb_start_thread(TCB_PTR(cap_thread_cap_get_capTCBPtr(lu_ret.cap)));
+        return EXCEPTION_NONE;
+    }
 #endif /* CONFIG_GDB */
 #ifdef ENABLE_SMP_SUPPORT
     if (w == SysDebugSendIPI) {

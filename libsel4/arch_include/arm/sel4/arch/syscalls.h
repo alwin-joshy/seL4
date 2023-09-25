@@ -606,6 +606,27 @@ LIBSEL4_INLINE_FUNC void seL4_DebugDumpScheduler(void)
 #endif
 
 #if CONFIG_DEBUG_BUILD
+
+#if CONFIG_GDB
+
+LIBSEL4_INLINE_FUNC void seL4_DebugEnterKGDB(void) {
+    arm_sys_null(seL4_SysDebugEnterKGDB);
+}
+
+LIBSEL4_INLINE_FUNC void seL4_DebugKGDBStartThread(seL4_CPtr tcb) {
+    seL4_Word unused0 = 0;
+    seL4_Word unused1 = 0;
+    seL4_Word unused2 = 0;
+    seL4_Word unused3 = 0;
+    seL4_Word unused4 = 0;
+    seL4_Word unused5 = 0;
+
+    arm_sys_send_recv(seL4_SysDebugKGDBStartThread, tcb, &unused0, 0, &unused1, &unused2, &unused3, &unused4,
+                      &unused5, 0);
+}
+
+#endif
+
 LIBSEL4_INLINE_FUNC void seL4_DebugHalt(void)
 {
     arm_sys_null(seL4_SysDebugHalt);

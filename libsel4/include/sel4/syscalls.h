@@ -61,6 +61,17 @@ seL4_DebugDumpScheduler(void);
 #endif
 
 #if CONFIG_DEBUG_BUILD
+
+#if CONFIG_GDB
+
+LIBSEL4_INLINE_FUNC void
+seL4_DebugEnterKGDB(void);
+
+LIBSEL4_INLINE_FUNC void
+seL4_DebugKGDBStartThread(seL4_CPtr tcb);
+
+#endif /* CONFIG_GDB */
+
 /**
  * @xmlonly <manual name="Halt" label="sel4_debughalt"/> @endxmlonly
  * @brief Halt the system.

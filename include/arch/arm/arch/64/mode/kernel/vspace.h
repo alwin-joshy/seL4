@@ -37,8 +37,8 @@ typedef struct writeHalfWordToVSpace_ret {
     exception_t status;
 } writeHalfWordToVSpace_ret_t;
 
-readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr);
-writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value);
+readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(cap_t vspaceRootCap, word_t vaddr);
+writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(cap_t vspaceRootCap, word_t vaddr, uint32_t value);
 
 #endif /* CONFIG_GDB */
 

@@ -1832,14 +1832,20 @@ void kernelDataAbort(word_t pc)
 
 #ifdef CONFIG_GDB
 
-readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t vaddr)
-{
+readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(cap_t vspaceRootCap, word_t vaddr)
+{    
     readHalfWordFromVSpace_ret_t ret;
     word_t offset;
     pptr_t kernel_vaddr;
     uint32_t *value;
 
-    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(pd, vaddr);
+    if (unlikely(!isValidNativeRoot(vspaceRootCap))) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
+
+    vspace_root_t *vspace_root = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
+    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(vspace_root, vaddr);
 
     /* Check that the returned slot is a page. */
     if (!pte_ptr_get_valid(lookup_ret.ptSlot) ||
@@ -1857,14 +1863,21 @@ readHalfWordFromVSpace_ret_t readHalfWordFromVSpace(vspace_root_t *pd, word_t va
     return ret;
 }
 
-writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vaddr, uint32_t value) {
+writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(cap_t vspaceRootCap, word_t vaddr, uint32_t value) {
     writeHalfWordToVSpace_ret_t ret;
     word_t offset;
     pptr_t kernel_vaddr;
     uint32_t *addr;
 
-    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(pd, vaddr);
+    if (unlikely(!isValidNativeRoot(vspaceRootCap))) {
+        ret.status = EXCEPTION_LOOKUP_FAULT;
+        return ret;
+    }
 
+    vspace_root_t *vspace_root = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
+    asid_t asid = cap_vspace_cap_get_capMappedASID(vspaceRootCap);
+
+    lookupPTSlot_ret_t lookup_ret = lookupPTSlot(vspace_root, vaddr);
     /* Check that the returned slot is a page. */
     if (!pte_ptr_get_valid(lookup_ret.ptSlot) ||
         (pte_pte_table_ptr_get_present(lookup_ret.ptSlot) && lookup_ret.ptBitsLeft > PAGE_BITS)) {
@@ -1877,7 +1890,9 @@ writeHalfWordToVSpace_ret_t writeHalfWordToVSpace(vspace_root_t *pd, word_t vadd
     addr = (uint32_t *)(kernel_vaddr + offset);
     *addr = value;
 
-    doFlush(ARMVSpaceUnify_Instruction, vaddr, vaddr + 4, pte_page_ptr_get_page_base_address(lookup_ret.ptSlot) + offset);
+    performVSpaceFlush(ARMVSpaceUnify_Instruction, vspace_root, asid, vaddr, vaddr + 4, 
+                       pte_page_ptr_get_page_base_address(lookup_ret.ptSlot) + offset);
+
     ret.status = EXCEPTION_NONE;
     return ret;
 }

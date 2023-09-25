@@ -12,12 +12,9 @@
 #define AARCH64_BREAK_KGDB_DYN_DBG  \
     (AARCH64_BREAK_MON | (KGDB_DYN_DBG_BRK_IMM << 5))
 
-typedef struct sw_breakpoint {
-    uint64_t addr;
-    uint32_t orig_instr;
-} sw_break_t;
-
-sw_break_t software_breakpoints[MAX_SW_BREAKS] = {0};
+thread_info_t threads[64] = {0};
+thread_info_t *target_thread = NULL;
+int num_threads = 1; 
 
 /* Hardware breapoint related stuff */
 
@@ -45,7 +42,7 @@ static char hexchars[] = "0123456789abcdef";
 #define SPSR_SS (1 << 21)
 
 /* Convert a character (representing a hexadecimal) to its integer equivalent */
-static int hex(unsigned char c)
+int hex(unsigned char c)
 {
     if (c >= 'a' && c <= 'f') {
         return c - 'a' + 10;
@@ -58,29 +55,40 @@ static int hex(unsigned char c)
 }
 
 
+// static bool_t is_mapped(tcb_t *thread, vptr_t vaddr)
+// {
+//     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
+//     return vaddrIsMapped(vspaceRootCap, vaddr);
+// }
+
 /**
  * Returns a ptr to last char put in buf or NULL on error (cannot read memory)
  */
 
-static bool_t is_mapped(vptr_t vaddr)
-{
-    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-    return vaddrIsMapped(vspaceRootCap, vaddr);
-}
 
-static char *mem2hex(char *mem, char *buf, int size)
+static char *mem2hex(tcb_t *thread, word_t mem, char *buf, int size)
 {
     int i;
     unsigned char c;
+    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
 
-    for (i = 0; i < size; i++, mem++) {
-        if (!is_mapped((vptr_t) mem & ~0xFFF)) {
-            return NULL;
+    word_t curr_word = 0;
+    for (i = 0; i < size; i++) {
+        if (i % INSTR_SIZE == 0) {
+            readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRootCap, mem);
+            if (ret.status != EXCEPTION_NONE) {
+                return NULL;
+            }
+
+            curr_word = ret.value;
+            mem += INSTR_SIZE;
         }
-        c = *mem;
+
+        c = *(((char *) &curr_word) + (i % INSTR_SIZE));
         *buf++ = hexchars[c >> 4];
         *buf++ = hexchars[c % 16];
     }
+
     *buf = 0;
     return buf;
 }
@@ -89,15 +97,66 @@ static char *mem2hex(char *mem, char *buf, int size)
  * Returns a ptr to the char after last memory byte written
  *  or NULL on error (cannot write memory)
  */
-static char *hex2mem(char *buf, char *mem, int size)
+static word_t hex2mem(tcb_t *thread, char *buf, word_t mem, int size)
 {
+    int i;
+    unsigned char c;
+    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
+
+    word_t curr_word = 0;
+    for (i = 0; i < size; i++, mem++) {
+        if (i % INSTR_SIZE == 0) {            
+            readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRootCap, mem);
+            if (ret.status != EXCEPTION_NONE) {
+                return 0;
+                // return NULL;
+            }
+
+            curr_word = ret.value;
+        }
+
+        c = hex(*buf++) << 4;
+        c += hex(*buf++);
+        *(((char *) &curr_word) + (i % INSTR_SIZE)) = c;
+
+        if (i % INSTR_SIZE == INSTR_SIZE - 1 || i == size - 1) {
+            writeHalfWordToVSpace(vspaceRootCap, mem + (i/INSTR_SIZE), curr_word);
+            mem += INSTR_SIZE;
+        }
+    }
+
+    return (mem + i);
+}
+
+/*
+ssh tftp, ssh consoles, console odroid-c2, ctrl shift e o to takr control, ctrl shift e . to disconnect
+*/
+
+static char *k_mem2hex(char *mem, char *buf, int size)
+{
+    /* @alwin: This check should be better */
+    assert(mem >= (char *) USER_TOP);
+
+    int i;
+    unsigned char c;
+    for (i = 0; i < size; i++, mem++) {
+        c = *mem;
+        *buf++ = hexchars[c >> 4];
+        *buf++ = hexchars[c % 16];
+    }
+    *buf = 0;
+    return buf;
+}
+
+static char *k_hex2mem(char *buf, char *mem, int size)
+{
+    /* @alwin: This check should be better */
+    assert(mem >= (char *) USER_TOP);
+
     int i;
     unsigned char c;
 
     for (i = 0; i < size; i++, mem++) {
-        if (!is_mapped((vptr_t) mem & ~0xFFF)) {
-            return NULL;
-        }
         c = hex(*buf++) << 4;
         c += hex(*buf++);
         *mem = c;
@@ -105,50 +164,48 @@ static char *hex2mem(char *buf, char *mem, int size)
     return mem;
 }
 
-/*
-ssh tftp, ssh consoles, console odroid-c2, ctrl shift e o to takr control, ctrl shift e . to disconnect
-*/
-
 char *regs_buf2hex(register_set_t *regs, char *buf)
 {
+
+    /* We use k_mem2hex for kernel virtual addresses */
+
     /* First we handle the 64-bit registers */
-    buf = mem2hex((char *) regs->registers_64, buf, NUM_REGS64 * sizeof(seL4_Word));
-    return mem2hex((char *) &regs->cpsr, buf, sizeof(seL4_Word) / 2);
+    buf = k_mem2hex((char *) regs->registers_64, buf, NUM_REGS64 * sizeof(seL4_Word));
+    return k_mem2hex((char *) &regs->cpsr, buf, sizeof(seL4_Word) / 2);
 }
 
 /**
  * Translates from registers to a registers buffer that gdb expects.
  */
-void regs2buf(register_set_t *regs)
+void regs2buf(tcb_t *thread, register_set_t *regs)
 {
     int i = 0;
     for (i = 0; i <= X30; i++) {
-        regs->registers_64[i] = getRegister(NODE_STATE(ksCurThread), i);
+        regs->registers_64[i] = getRegister(thread, i);
     }
-    regs->registers_64[i++] = getRegister(NODE_STATE(ksCurThread), SP_EL0);
-    regs->registers_64[i++] = getRegister(NODE_STATE(ksCurThread), NextIP);
-    regs->cpsr = getRegister(NODE_STATE(ksCurThread), SPSR_EL1) & 0xffffffff;
+    regs->registers_64[i++] = getRegister(thread, SP_EL0);
+    regs->registers_64[i++] = getRegister(thread, NextIP);
+    regs->cpsr = getRegister(thread, SPSR_EL1) & 0xffffffff;
 }
 
 /**
  * Translates from gdb registers buffer to registers
  */
-void buf2regs(register_set_t *regs)
+void buf2regs(tcb_t *thread, register_set_t *regs)
 {
     int i;
     for (i = 0; i <= X30; i++) {
-        setRegister(NODE_STATE(ksCurThread), i, regs->registers_64[i]);
+        setRegister(thread, i, regs->registers_64[i]);
     }
-    setRegister(NODE_STATE(ksCurThread), SP_EL0, regs->registers_64[i++]);
-    setRegister(NODE_STATE(ksCurThread), NextIP, regs->registers_64[i++]);
-    setRegister(NODE_STATE(ksCurThread), SPSR_EL1, regs->cpsr);
+    setRegister(thread, SP_EL0, regs->registers_64[i++]);
+    setRegister(thread, NextIP, regs->registers_64[i++]);
+    setRegister(thread, SPSR_EL1, regs->cpsr);
 }
 
-static bool_t instruction_read(seL4_Word addr, uint32_t *instr)
+static bool_t instruction_read(tcb_t *thread, seL4_Word addr, uint32_t *instr)
 {
-    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-    vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
-    readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRoot, addr);
+    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
+    readHalfWordFromVSpace_ret_t ret = readHalfWordFromVSpace(vspaceRootCap, addr);
     if (ret.status) {
         return false;
     }
@@ -156,55 +213,57 @@ static bool_t instruction_read(seL4_Word addr, uint32_t *instr)
     return true;
 }
 
-static bool_t instruction_write(seL4_Word addr, uint32_t instr)
+static bool_t instruction_write(tcb_t *thread, seL4_Word addr, uint32_t instr)
 {
-    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
-    vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capPTBasePtr(vspaceRootCap));
-    writeHalfWordToVSpace_ret_t ret = writeHalfWordToVSpace(vspaceRoot, addr, instr);
+    cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
+    writeHalfWordToVSpace_ret_t ret = writeHalfWordToVSpace(vspaceRootCap, addr, instr);
     if (ret.status) {
         return false;
     }
     return true;
 }
 
-bool_t set_software_breakpoint(seL4_Word addr)
+bool_t set_software_breakpoint(thread_info_t *thread_info, seL4_Word addr)
 {
     sw_break_t tmp;
     tmp.addr = addr;
 
-    if (!instruction_read(addr, &tmp.orig_instr)) {
+    if (!instruction_read(thread_info->tcb, addr, &tmp.orig_instr)) {
         return false;
     }
 
-    if (!instruction_write(addr, AARCH64_BREAK_KGDB_DYN_DBG)) {
+    if (!instruction_write(thread_info->tcb, addr, AARCH64_BREAK_KGDB_DYN_DBG)) {
         return false;
     }
+
 
     int i;
     for (i = 0; i < MAX_SW_BREAKS; i++) {
-        if (software_breakpoints[i].addr == 0) {
-            software_breakpoints[i] = tmp;
+        if (thread_info->software_breakpoints[i].addr == 0) {
+            thread_info->software_breakpoints[i] = tmp;
             return true;
         }
     }
 
-    instruction_write(addr, tmp.orig_instr);
+    instruction_write(thread_info->tcb, addr, tmp.orig_instr);
     return false;
 }
 
-bool_t unset_software_breakpoint(seL4_Word addr) {
+bool_t unset_software_breakpoint(thread_info_t *thread_info, seL4_Word addr) {
     int i = 0;
     for (i = 0; i < MAX_SW_BREAKS; i++) {
-        if (software_breakpoints[i].addr == addr) {
+        if (thread_info->software_breakpoints[i].addr == addr) {
             break;
         }
     }
 
+    /* @alwin: which is the right behaviour here? */
     if (i == MAX_SW_BREAKS) {
-        return false; 
+        // return false; 
+        return true; 
     }
 
-    if (!instruction_write(addr, software_breakpoints[i].orig_instr)) {
+    if (!instruction_write(thread_info->tcb, addr, thread_info->software_breakpoints[i].orig_instr)) {
         return false; 
     }
 

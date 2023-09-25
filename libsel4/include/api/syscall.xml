@@ -45,6 +45,7 @@
         <config>
             <condition><config var="CONFIG_GDB"/></condition>
             <syscall name="DebugEnterKGDB"/>
+            <syscall name="DebugKGDBStartThread"/>
         </config>
         <config>
             <condition><config var="CONFIG_DEBUG_BUILD"/></condition>
