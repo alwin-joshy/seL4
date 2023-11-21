@@ -15,8 +15,10 @@ set(CMAKE_SYSROOT "${CMAKE_BINARY_DIR}")
 
 # When this file is passed to configure_file in cmake, these variables get set to
 # the kernel platform configuration.
-set(sel4_arch @KernelSel4Arch@)
-set(arch @KernelArch@)
+#set(sel4_arch @KernelSel4Arch@)
+set(sel4_arch aarch64)
+#set(arch @KernelArch@)
+set(arch arm)
 set(mode @KernelWordSize@)
 set(cross_prefix @cross_prefix@)
 

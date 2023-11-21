@@ -312,7 +312,6 @@ def init_arch_types(wordsize, args):
             CapType("seL4_ARM_VCPU", wordsize),
             CapType("seL4_ARM_IOSpace", wordsize),
             CapType("seL4_ARM_IOPageTable", wordsize),
-            StructType("seL4_CapSet", wordsize * 33, wordsize),
             StructType("seL4_UserContext", wordsize * 36, wordsize),
         ] + arm_smmu,
 
@@ -687,9 +686,10 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
     #
     array_size_expr = ""
     if len(array_params) != 0:
-        padding = min(0, num_mrs - len(input_expressions));
+        padding = max(0, num_mrs - len(input_expressions));
+        print("hello there " + str(padding))
         if padding > 0:
-            array_size_expr = str(padding) + " "
+            array_size_expr = "+ " + str(padding) + " "
 
     for array in array_params:
         # TODO: What should actually be returned here?
@@ -744,7 +744,7 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
         start = str(num_mrs)
 
     for array in array_params:
-        result.append("\tfor (int i = 0; i < %s; i++)" % (array.name + "_size"))
+        result.append("\tfor (seL4_Word i = 0; i < %s; i++)" % (array.name + "_size"))
         result.append("\t\tseL4_SetMR(%s, %s);" % (str(start) + " + i", array.name + "[i]"))
         start += (" + %s" % (array.name + "_size")) 
 

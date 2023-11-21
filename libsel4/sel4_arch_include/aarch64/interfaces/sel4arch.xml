@@ -44,41 +44,6 @@
         <member name="tpidr_el0"/>
         <member name="tpidrro_el0"/>
     </struct>
-    <struct name="seL4_CapSet">
-        <member name="c0"/>
-        <member name="c1"/>
-        <member name="c2"/>
-        <member name="c3"/>
-        <member name="c4"/>
-        <member name="c5"/>
-        <member name="c6"/>
-        <member name="c7"/>
-        <member name="c8"/>
-        <member name="c9"/>
-        <member name="c10"/>
-        <member name="c11"/>
-        <member name="c12"/>
-        <member name="c13"/>
-        <member name="c14"/>
-        <member name="c15"/>
-        <member name="c16"/>
-        <member name="c17"/>
-        <member name="c18"/>
-        <member name="c19"/>
-        <member name="c20"/>
-        <member name="c21"/>
-        <member name="c22"/>
-        <member name="c23"/>
-        <member name="c24"/>
-        <member name="c25"/>
-        <member name="c26"/>
-        <member name="c27"/>
-        <member name="c28"/>
-        <member name="c29"/>
-        <member name="c30"/>
-        <member name="c31"/>
-        <member name="num"/>
-    </struct>
     <interface name="seL4_ARM_VSpace" manual_name="Page Global Directory"
         cap_description="Capability to the top level translation table being operated on.">
         <method id="ARMVSpaceClean_Data" name="Clean_Data" manual_label="vspace_clean"
