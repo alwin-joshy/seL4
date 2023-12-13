@@ -16,7 +16,7 @@ static char kgdb_out[BUFSIZE];
 
 extern thread_info_t threads[MAX_THREADS];
 extern thread_info_t *target_thread;
-extern int num_threads; 
+extern int num_threads;
 
 /* Output a character to serial */
 static void gdb_putChar(char c)
@@ -173,6 +173,22 @@ void kgdb_start_thread(tcb_t *tcb) {
     kgdb_handler();
 }
 
+void kgdb_switch_thread(tcb_t *old_tcb, tcb_t *new_tcb) {
+    thread_info_t *old_thread = NULL; 
+    thread_info_t *new_thread = NULL;
+    for (int i = 0; i < num_threads; i++) {
+        if (threads[i].tcb == new_tcb) {
+            new_thread = &threads[i];
+        } else if (threads[i].tcb == old_tcb) {
+            old_thread = &threads[i];
+        }
+    }
+    if (!(new_thread && old_thread)) {
+        return;
+    }
+    arch_switch_thread(old_thread, new_thread);
+}
+
 static char *hex2regs_buf(char *buf, register_set_t *regs)
 {
     /* We use k_hex2mem for kernel virtual addresses  */
@@ -205,7 +221,7 @@ static bool_t parse_mem_format(char *ptr, seL4_Word *addr, seL4_Word *size)
     *size = 0;
     bool_t is_read = true;
 
-    /* Are we dealing with a memory read or a memory write */
+    /* Are we dealing with a memory read or a memory write? */
     if (*ptr++ == 'M') {
         is_read = false;
     }
@@ -257,7 +273,7 @@ static bool_t parse_breakpoint_format(char *ptr, seL4_Word *addr, seL4_Word *kin
 }
 
 
-void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr)
+void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr, bool_t was_write)
 {
     if (type == DEBUG_SW_BREAK) {
         strlcpy(kgdb_out, "T05thread:p", sizeof(kgdb_out));
@@ -275,6 +291,37 @@ void kgdb_handle_debug_fault(debug_exception_t type, seL4_Word vaddr)
         kgdb_put_packet(kgdb_out);
     } else if (type == DEBUG_HW_BREAK || type == DEBUG_SS) {
         strlcpy(kgdb_out, "T05hwbreak:;", sizeof(kgdb_out));
+        kgdb_put_packet(kgdb_out);
+    } else if (type == DEBUG_WP) {
+        strlcpy(kgdb_out, "T05thread:p", sizeof(kgdb_out));
+        uint8_t i = 0;
+        for (i = 0; i < MAX_THREADS; i++) {
+            if (threads[i].tcb == NODE_STATE(ksCurThread)) {
+                break;
+            }
+        }
+        assert(i != MAX_THREADS);
+        char *ptr = k_mem2hex((char *) &i, kgdb_out + strnlen(kgdb_out, sizeof(kgdb_out)), sizeof(uint8_t));
+        watch_type_t type = get_watchpoint_type(&threads[i], vaddr);
+        switch (type) {
+        case WATCHPOINT_ACCESS:
+            strlcpy(ptr, ".1;awatch:", sizeof(kgdb_out));
+            break;
+        case WATCHPOINT_READ:
+            strlcpy(ptr, ".1;rwatch:", sizeof(kgdb_out));
+            break;
+        case WATCHPOINT_WRITE:
+            strlcpy(ptr, ".1;watch:", sizeof(kgdb_out));
+            break;
+        default:
+            /* @alwin: This should probs not be an assert 0 */
+            assert(0);
+        }
+
+        /* Convert the vaddr to big endian */
+        seL4_Word vaddr_be = arch_to_big_endian(vaddr);
+        ptr = k_mem2hex((char *) &vaddr_be, kgdb_out + strnlen(kgdb_out, sizeof(kgdb_out)), sizeof(seL4_Word));
+        strlcpy(ptr, ";", sizeof(kgdb_out));
         kgdb_put_packet(kgdb_out);
     }
 }
@@ -366,53 +413,53 @@ static void handle_query(char *ptr) {
 
 static void handle_configure_debug_events(char *ptr) {
     seL4_Word addr, size;
+    bool_t success;
+
+    if (!parse_breakpoint_format(ptr, &addr, &size)) {
+        strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
+        return;
+    }
 
     /* Breakpoints and watchpoints */
+
     if (strncmp(ptr, "Z0", 2) == 0) {
         /* Set a software breakpoint using binary rewriting */
-        if (!parse_breakpoint_format(ptr, &addr, &size)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-            return;
-        }
-        if (!set_software_breakpoint(target_thread, addr)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-        } else {
-            strlcpy(kgdb_out, "OK", sizeof(kgdb_out));
-        }
+        success = set_software_breakpoint(target_thread, addr);
     } else if (strncmp(ptr, "z0", 2) == 0) {
         /* Unset a software breakpoint */
-        if (!parse_breakpoint_format(ptr, &addr, &size)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-            return;
-        }
-        if (!unset_software_breakpoint(target_thread, addr)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-        } else {
-            strlcpy(kgdb_out, "OK", sizeof(kgdb_out));
-        }
+        success = unset_software_breakpoint(target_thread, addr);
     } else if (strncmp(ptr, "Z1", 2) == 0) {
         /* Set a hardware breakpoint */
-        if (!parse_breakpoint_format(ptr, &addr, &size)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-            return;
-        }
-        if (!set_hardware_breakpoint(addr)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-        } else {
-            strlcpy(kgdb_out, "OK", sizeof(kgdb_out));
-        }
+        success = set_hardware_breakpoint(target_thread, addr);
     } else if (strncmp(ptr, "z1", 2) == 0) {
         /* Unset a hardware breakpoint */
-        if (!parse_breakpoint_format(ptr, &addr, &size)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-            return;
-        }
-        if (!unset_hardware_breakpoint(addr)) {
-            strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
-        } else {
-            strlcpy(kgdb_out, "OK", sizeof(kgdb_out));
-        }
+        success = unset_hardware_breakpoint(target_thread, addr);
+    } else if (strncmp(ptr, "Z2", 2) == 0) {
+        /* Set a write watchpoint */
+        success = set_watchpoint(target_thread, addr, WATCHPOINT_WRITE);
+    } else if (strncmp(ptr, "z2", 2) == 0) {
+        /* Unset a write watchpoint */
+        success = unset_watchpoint(target_thread, addr);
+    } else if (strncmp(ptr, "Z3", 2) == 0) {
+        /* Set a read watchpoint */
+        success = set_watchpoint(target_thread, addr, WATCHPOINT_READ);
+    } else if (strncmp(ptr, "z3", 2) == 0) {
+        /* Unset a read watchpoint */
+        success = unset_watchpoint(target_thread, addr);
+    } else if (strncmp(ptr, "Z4", 2) == 0) {
+        /* Set an access watchpoint */
+        success = set_watchpoint(target_thread, addr, WATCHPOINT_ACCESS);
+    } else if (strncmp(ptr, "z4", 2) == 0) {
+        /* Unset an access watchpoint */
+        success = unset_watchpoint(target_thread, addr);
     }
+
+    if (!success) {
+        strlcpy(kgdb_out, "E01", sizeof(kgdb_out));
+    } else {
+        strlcpy(kgdb_out, "OK", sizeof(kgdb_out));
+    }
+
 }
 
 static int parse_thread_id(char *ptr, int *proc_id) {
@@ -488,6 +535,10 @@ void kgdb_handler(void)
 {
     // printf("Entering KGDB stub\n");
     char *ptr;
+    // thread_info_t thread;
+    // thread.tcb = NODE_STATE(ksCurThread);
+    // set_watchpoint(&thread, 0x205000, WATCHPOINT_ACCESS);
+    // return;
     while (1) {
         ptr = kgdb_get_packet();
         kgdb_out[0] = 0;

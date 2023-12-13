@@ -47,16 +47,23 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
 #ifdef CONFIG_GDB
     if (((getESR() >> 0x1A) & 0x3F) == 0x3C) {
         /* Check if we hit a software breakpoint */
-        kgdb_handle_debug_fault(DEBUG_SW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
+        kgdb_handle_debug_fault(DEBUG_SW_BREAK, getRestartPC(NODE_STATE(ksCurThread)), 0);
         kgdb_handler();
         restore_user_context();
     } else if (((getESR() >> 0x1A) & 0x3F) == 0x30) {
         /* Check if we hit a hardware breakpoint */
-        kgdb_handle_debug_fault(DEBUG_HW_BREAK, getRestartPC(NODE_STATE(ksCurThread)));
+        kgdb_handle_debug_fault(DEBUG_HW_BREAK, getRestartPC(NODE_STATE(ksCurThread)), 0);
         kgdb_handler();
         restore_user_context();
     } else if (((getESR() >> 0x1A) & 0x3F) == 0x32) {
-        kgdb_handle_debug_fault(DEBUG_SS, getRestartPC(NODE_STATE(ksCurThread)));
+        /* Check if we hit a single step exception */
+        kgdb_handle_debug_fault(DEBUG_SS, getRestartPC(NODE_STATE(ksCurThread)), 0);
+        kgdb_handler();
+        restore_user_context();
+    } else if (((getESR() >> 0x1A) & 0x3F) == 0x34) {
+        /* Watchpoint exception */
+        bool_t was_write = ((getESR() >> 0x6) & 0x1);
+        kgdb_handle_debug_fault(DEBUG_WP, getFAR(), was_write);
         kgdb_handler();
         restore_user_context();
     }

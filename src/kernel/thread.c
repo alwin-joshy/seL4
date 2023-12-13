@@ -450,6 +450,9 @@ void switchToThread(tcb_t *thread)
 #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
     benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
 #endif
+#ifdef CONFIG_GDB
+    kgdb_switch_thread(NODE_STATE(ksCurThread), thread);
+#endif
     Arch_switchToThread(thread);
     tcbSchedDequeue(thread);
     NODE_STATE(ksCurThread) = thread;

@@ -12,30 +12,37 @@
 #define AARCH64_BREAK_KGDB_DYN_DBG  \
     (AARCH64_BREAK_MON | (KGDB_DYN_DBG_BRK_IMM << 5))
 
+/* Thread bookkeeping */
 thread_info_t threads[64] = {0};
 thread_info_t *target_thread = NULL;
 int num_threads = 1; 
 
-/* Hardware breapoint related stuff */
-
-typedef struct hw_breakpoint {
-    uint64_t addr;
-} hw_break_t;
-
-hw_break_t hardware_breakpoints[seL4_NumExclusiveBreakpoints] = {0};
-
 /* Hex characters */
 static char hexchars[] = "0123456789abcdef";
 
-/* Debug register manipulation */
+/* Breakpoint control register manipulation */
 #define DBGBCR_BT 0xF00000
 #define DBGBCR_EN 0x1
 #define DBGBCR_BAS 0x1E0
 #define DBGBCR_PMC 0x6
 
+/* Breakpoint value register manipulation */
 #define DBGBVR_RESS 0xFFE0000000000000
 #define DBGBVR_VA   0x1FFFFFFFFFFFC
 
+/* Watchpoint control register manipulation */
+#define DBGWCR_WT 0x100000
+#define DBGWCR_EN 0x1
+#define DBGWCR_BAS 0x1FE0
+#define DBGWCR_MASK 0x1F000000
+#define DBGWCR_PAC 0x6
+#define DBGWCR_LSC 0x18
+
+/* Watchpoint value register manipulation */
+#define DBGWVR_RESS 0xFFE0000000000000
+#define DBGWVR_VA   0x1FFFFFFFFFFFC
+
+/* General debug and single step register stuff*/
 #define MDSCR_MDE   (1 << 15)
 #define MDSCR_SS   (1)
 
@@ -213,6 +220,10 @@ static bool_t instruction_read(tcb_t *thread, seL4_Word addr, uint32_t *instr)
     return true;
 }
 
+seL4_Word arch_to_big_endian(seL4_Word vaddr) {
+    return __builtin_bswap64(vaddr);
+}
+
 static bool_t instruction_write(tcb_t *thread, seL4_Word addr, uint32_t instr)
 {
     cap_t vspaceRootCap = TCB_PTR_CTE_PTR(thread, tcbVTable)->cap;
@@ -304,6 +315,50 @@ static void set_dbgbcr(int breakpoint_num) {
     }
 }
 
+static void set_dbgwcr(int breakpoint_num, watch_type_t type) {
+    word_t dbgwcr_val = 0;
+
+    switch (breakpoint_num) {
+        case 0 : MRS("DBGWCR0_EL1", dbgwcr_val); break;
+        case 1 : MRS("DBGWCR1_EL1", dbgwcr_val); break;
+        case 2 : MRS("DBGWCR2_EL1", dbgwcr_val); break;
+        case 3 : MRS("DBGWCR3_EL1", dbgwcr_val); break;
+        case 4 : MRS("DBGWCR4_EL1", dbgwcr_val); break;
+        case 5 : MRS("DBGWCR5_EL1", dbgwcr_val); break;
+        default : assert(0);
+    }
+
+    dbgwcr_val = 0;
+
+    /* Set the watchpoint type */
+    dbgwcr_val = (dbgwcr_val & ~DBGWCR_WT) | (0x0 & DBGWCR_WT);
+    /* Set the behaviour of the watchpoint  */
+    dbgwcr_val = (dbgwcr_val & ~DBGWCR_PAC) | ((0x2 << 1) & DBGWCR_PAC);
+    /* Set which byte of the watchpoint addr is matched */ 
+    
+    /* @alwin: This probably has no reason to be 0xFF and should be 0x1 instead */
+    dbgwcr_val = (dbgwcr_val & ~DBGWCR_BAS) | ((0xFF << 5) & DBGWCR_BAS);
+    /* Set the mask of the watchpoint */
+    dbgwcr_val = dbgwcr_val & ~DBGWCR_MASK;
+    /* Set the type of the watchpoint */
+    dbgwcr_val = (dbgwcr_val & ~DBGWCR_LSC) | ((type << 3) & DBGWCR_LSC);
+    /* Enable the breakpoint */
+    dbgwcr_val = dbgwcr_val | DBGWCR_EN;
+
+    // userError("dbgwcr_val: %lx", dbgwcr_val);
+
+    switch (breakpoint_num) {
+        case 0 : MSR("DBGWCR0_EL1", dbgwcr_val); break;
+        case 1 : MSR("DBGWCR1_EL1", dbgwcr_val); break;
+        case 2 : MSR("DBGWCR2_EL1", dbgwcr_val); break;
+        case 3 : MSR("DBGWCR3_EL1", dbgwcr_val); break;
+        case 4 : MSR("DBGWCR4_EL1", dbgwcr_val); break;
+        case 5 : MSR("DBGWCR5_EL1", dbgwcr_val); break;
+        default : assert(0);
+    }
+}
+
+
 static void unset_dbgbcr(int breakpoint_num) {
     word_t dbgbcr_val = 0;
 
@@ -331,6 +386,32 @@ static void unset_dbgbcr(int breakpoint_num) {
     }
 }
 
+static void unset_dbgwcr(int breakpoint_num) {
+    word_t dbgwcr_val = 0;
+
+    switch (breakpoint_num) {
+        case 0 : MRS("DBGWCR0_EL1", dbgwcr_val); break;
+        case 1 : MRS("DBGWCR1_EL1", dbgwcr_val); break;
+        case 2 : MRS("DBGWCR2_EL1", dbgwcr_val); break;
+        case 3 : MRS("DBGWCR3_EL1", dbgwcr_val); break;
+        case 4 : MRS("DBGWCR4_EL1", dbgwcr_val); break;
+        case 5 : MRS("DBGWCR5_EL1", dbgwcr_val); break;
+        default : assert(0);
+    }
+
+    /* Disable the breakpoint */
+    dbgwcr_val = dbgwcr_val & ~DBGWCR_EN;
+
+    switch (breakpoint_num) {
+        case 0 : MSR("DBGWCR0_EL1", dbgwcr_val); break;
+        case 1 : MSR("DBGWCR1_EL1", dbgwcr_val); break;
+        case 2 : MSR("DBGWCR2_EL1", dbgwcr_val); break;
+        case 3 : MSR("DBGWCR3_EL1", dbgwcr_val); break;
+        case 4 : MSR("DBGWCR4_EL1", dbgwcr_val); break;
+        case 5 : MSR("DBGWCR5_EL1", dbgwcr_val); break;
+        default : assert(0);
+    }
+}
 
 static void set_dbgbvr(int breakpoint_num, seL4_Word addr) {
     word_t dbgbvr_val = 0;
@@ -363,20 +444,45 @@ static void set_dbgbvr(int breakpoint_num, seL4_Word addr) {
     }
 }
 
-bool_t set_hardware_breakpoint(seL4_Word addr) {
+static void set_dbgwvr(int watchpoint_num, seL4_Word addr) {
+    word_t dbgwvr_val = 0;
 
-    int i = 0; 
-    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-        if (!hardware_breakpoints[i].addr) break;
+    switch (watchpoint_num) {
+        case 0 : MRS("DBGWVR0_EL1", dbgwvr_val); break;
+        case 1 : MRS("DBGWVR1_EL1", dbgwvr_val); break;
+        case 2 : MRS("DBGWVR2_EL1", dbgwvr_val); break;
+        case 3 : MRS("DBGWVR3_EL1", dbgwvr_val); break;
+        case 4 : MRS("DBGWVR4_EL1", dbgwvr_val); break;
+        case 5 : MRS("DBGWVR5_EL1", dbgwvr_val); break;
+        default : assert(0);
     }
 
-    if (i == seL4_NumExclusiveBreakpoints) return false ;
+    dbgwvr_val = (dbgwvr_val & ~DBGWVR_VA) | (addr & DBGWVR_VA);
+    if ((addr >> 48) & 0x1) {
+        dbgwvr_val = (dbgwvr_val & ~DBGWVR_RESS) | DBGWVR_RESS;
+    } else {
+        dbgwvr_val = (dbgwvr_val & ~DBGWVR_RESS);
+    }
 
-    /* set the debug control register for this breakpoint number */
-    set_dbgbcr(i);
-    
-    /* Set the debug value register for this breakpoint number */
-    set_dbgbvr(i, addr);
+    // userError("dbgwvr_val : %lx", dbgwvr_val);
+
+    switch (watchpoint_num) {
+        case 0 : MSR("DBGWVR0_EL1", dbgwvr_val); break;
+        case 1 : MSR("DBGWVR1_EL1", dbgwvr_val); break;
+        case 2 : MSR("DBGWVR2_EL1", dbgwvr_val); break;
+        case 3 : MSR("DBGWVR3_EL1", dbgwvr_val); break;
+        case 4 : MSR("DBGWVR4_EL1", dbgwvr_val); break;
+        case 5 : MSR("DBGWVR5_EL1", dbgwvr_val); break;
+        default : assert(0);
+    }
+}
+
+static void hw_set_watchpoint(uint8_t num, seL4_Word addr, watch_type_t type) {
+    /* set the debug control register for this watchpoint number */
+    set_dbgwcr(num, type);
+
+    /* Set the debug value register for this watchpoint number */
+    set_dbgwvr(num, addr);
 
     /* Setup the general the debug control register */
     word_t mdscr = 0;
@@ -390,18 +496,146 @@ bool_t set_hardware_breakpoint(seL4_Word addr) {
     MSR("osdlr_el1", osdlar);
     word_t oslar = 0;
     MSR("oslar_el1", oslar);
+}
+
+
+static void hw_set_hardware_breakpoint(uint8_t num, seL4_Word addr) {
+    /* set the debug control register for this breakpoint number */
+    set_dbgbcr(num);
+    
+    /* Set the debug value register for this breakpoint number */
+    set_dbgbvr(num, addr);
+
+    /* Setup the general the debug control register */
+    word_t mdscr = 0;
+    MRS("MDSCR_EL1", mdscr);
+    /* Enable breakpoint exceptions. Ideally, this should only have to be done once */
+    mdscr = (mdscr | MDSCR_MDE);
+    MSR("MDSCR_EL1", mdscr);
+
+    /* Ensure that OS lock and double lock are unset */
+    word_t osdlar = 0;
+    MSR("osdlr_el1", osdlar);
+    word_t oslar = 0;
+    MSR("oslar_el1", oslar);
+}
+
+bool_t set_hardware_breakpoint(thread_info_t *thread_info, seL4_Word addr) {
+
+    int i = 0; 
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        if (!thread_info->hardware_breakpoints[i].addr) break;
+    }
+
+    if (i == seL4_NumExclusiveBreakpoints) return false ;
+
+    if (thread_info->tcb == NODE_STATE(ksCurThread)) {
+        hw_set_hardware_breakpoint(i, addr);
+    }
+
     return true;
 }
 
-bool_t unset_hardware_breakpoint(seL4_Word addr) {
+static void switch_from(thread_info_t *thread_info) {
+    /* Deal with breakpoints */
+    for (int i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        if (thread_info->hardware_breakpoints[i].addr != 0) {
+            unset_dbgbcr(i);
+        }
+    }
+
+    /* Deal with watchpoints */
+    for (int i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        if (thread_info->watchpoints[i].addr != 0) {
+            unset_dbgwcr(i);
+        }
+    }
+}
+
+static void switch_to(thread_info_t *thread_info) {
+    /* Deal with breakpoints */
+    for (int i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        hw_break_t bp = thread_info->hardware_breakpoints[i];
+        if (bp.addr != 0) {
+            hw_set_hardware_breakpoint(i, bp.addr);
+        }
+    }
+
+    /* Deal with watchpoints */
+    for (int i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        watch_t wp = thread_info->watchpoints[i];
+        if (wp.addr != 0) {
+            hw_set_watchpoint(i, wp.addr, wp.type);
+        }
+    }
+}
+
+void arch_switch_thread(thread_info_t *curr_thread, thread_info_t *new_thread) {
+    switch_from(curr_thread);
+    switch_to(new_thread);
+}
+
+bool_t unset_hardware_breakpoint(thread_info_t *thread_info, seL4_Word addr) {
     int i = 0;
     for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-        if (hardware_breakpoints[i].addr == addr) break;
+        if (thread_info->hardware_breakpoints[i].addr == addr) {
+            thread_info->hardware_breakpoints[i].addr = 0;
+            break;
+        }
     }
 
     if (i == seL4_NumExclusiveBreakpoints) return false;
 
-    unset_dbgbcr(i);
+    if (thread_info->tcb == NODE_STATE(ksCurThread)) {
+        unset_dbgbcr(i);
+    }
+
+    return true;
+}
+
+bool_t set_watchpoint(thread_info_t *thread_info, seL4_Word addr, watch_type_t type) {
+    int i = 0;
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        if (!thread_info->watchpoints[i].addr) {
+            thread_info->watchpoints[i].addr = addr;
+            thread_info->watchpoints[i].type = type;
+            break;
+        }
+    }
+
+    if (i == seL4_NumExclusiveWatchpoints) return false;
+
+    if (thread_info->tcb == NODE_STATE(ksCurThread)) {
+        hw_set_watchpoint(i, addr, type);
+    }
+
+    return true;
+}
+
+watch_type_t get_watchpoint_type(thread_info_t *thread_info, seL4_Word addr) {
+    for (int i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        if (thread_info->watchpoints[i].addr == addr) {
+            return thread_info->watchpoints[i].type;
+        }
+    }
+
+    return WATCHPOINT_INVALID;
+}
+
+bool_t unset_watchpoint(thread_info_t *thread_info, seL4_Word addr) {
+    int i = 0;
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        if (thread_info->watchpoints[i].addr == addr) {
+            thread_info->watchpoints[i].addr = 0;
+            break;
+        }
+    }
+
+    if (i == seL4_NumExclusiveWatchpoints) return false;
+
+    if (thread_info->tcb == NODE_STATE(ksCurThread)) {
+        unset_dbgwcr(i);
+    }
 
     return true;
 }
