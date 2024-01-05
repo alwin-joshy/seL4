@@ -1687,6 +1687,8 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
+#define MAX_BATCH 32
+
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
 {
@@ -1698,6 +1700,170 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
     findVSpaceForASID_ret_t find_ret;
 
     switch (invLabel) {
+    case ARMVspaceMap_Range: {
+        asid_t asid, frame_asid;
+        vspace_root_t *vspaceRoot;
+        vptr_t vaddr;
+        seL4_Word rights_word;
+        vm_attributes_t attributes;
+        seL4_Word num;
+        lookupCapAndSlot_ret_t lu_ret[MAX_BATCH];
+        vm_page_size_t frame_size = (word_t) -1;
+        lookupPTSlot_ret_t lookup_pt_ret[MAX_BATCH] = {0};
+        lookupPDSlot_ret_t lookup_pd_ret[MAX_BATCH] = {0};
+        lookupPUDSlot_ret_t lookup_pud_ret[MAX_BATCH] = {0};       
+
+        vaddr = getSyscallArg(0, buffer);
+        rights_word = getSyscallArg(1, buffer);
+        attributes = vmAttributesFromWord(getSyscallArg(2, buffer));
+        num = getSyscallArg(3, buffer);
+
+        if (num > MAX_BATCH) {
+            userError("VspaceRoot Map Range Operation: Too many capability args specified.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the invoked cap is a valid vspace */
+        if (unlikely(!isValidNativeRoot(cap))) {
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Make sure that the supplied pgd is ok */
+        vspaceRoot = cap_vtable_root_get_basePtr(cap);
+        asid = cap_vtable_root_get_mappedASID(cap);
+
+        findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpaceRoot Map Range Operation: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpaceRoot Map Range Operation: Invalid VSpace Cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        /* Iterate through and check the caps */
+        seL4_Word *cap_set = &buffer[n_msgRegisters + 1];
+        seL4_Word curr_vaddr = vaddr;
+        seL4_Word frame_size_val = 0;
+
+        for (int i = 0; i < num; i++) {
+            lu_ret[i] = lookupCapAndSlot(NODE_STATE(ksCurThread), cap_set[i]);
+            if (unlikely(lu_ret[i].status != EXCEPTION_NONE)) {
+                userError("VSpaceRoot Map Range Operation: Capability lookup of %lu failed", cap_set[i]);
+                current_syscall_error.type = seL4_FailedLookup;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Check that the cap is a frame cap */
+            if (cap_get_capType(lu_ret[i].cap) != cap_frame_cap) {
+                userError("VSpaceRoot Map Range: %lu is not a frame cap", cap_set[i]);
+                current_syscall_error.type = seL4_InvalidCapability;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Make sure all the frames are the same size */
+            if (frame_size == (word_t) -1) {
+                frame_size = cap_frame_cap_get_capFSize(lu_ret[i].cap);
+                frame_size_val = BIT(pageBitsForSize(frame_size)) ;
+            } else if (cap_frame_cap_get_capFSize(lu_ret[i].cap) != frame_size) {
+                userError("VSpaceRoot Map Range: Provided different sized frames");
+                current_syscall_error.type = seL4_InvalidCapability;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&lu_ret[i].cap);
+            if (frame_asid != asidInvalid) {
+                userError("VSpaceRoot Map Range: Frame cap should be clean");
+            }
+
+            if (curr_vaddr + frame_size_val - 1 > USER_TOP) {
+                userError("VSpaceRoot Map Range: Vaddr range overflows into kernel memory");
+                current_syscall_error.type = seL4_InvalidArgument;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (frame_size == ARMSmallPage) {
+                lookup_pt_ret[i] = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+                if (unlikely(lookup_pt_ret[i].status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                if (unlikely(pte_ptr_get_present(lookup_pt_ret[i].ptSlot))) {
+                    userError("VSpaceRoot Map Range: Virtual address is already mapped!");
+                    current_syscall_error.type = seL4_DeleteFirst;
+                    return seL4_DeleteFirst;
+                }
+
+            } else if (frame_size == ARMLargePage) {
+                lookup_pd_ret[i] = lookupPDSlot(vspaceRoot, curr_vaddr);
+
+                if (unlikely(lookup_pd_ret[i].status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                if (unlikely(pde_pde_large_ptr_get_present(lookup_pd_ret[i].pdSlot))) {
+                    userError("VSpaceRoot Map Range: Virtual address is already mapped!");
+                    current_syscall_error.type = seL4_DeleteFirst;
+                    return seL4_DeleteFirst;
+                }
+
+            } else {
+                lookup_pud_ret[i] = lookupPUDSlot(vspaceRoot, curr_vaddr);
+
+                if (unlikely(lookup_pud_ret[i].status != EXCEPTION_NONE)) {
+                    current_syscall_error.type = seL4_FailedLookup;
+                    current_syscall_error.failedLookupWasSource = false;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                if (unlikely(pude_pude_1g_ptr_get_present(lookup_pud_ret[i].pudSlot))) {
+                    userError("VSpaceRoot Map Range: Virtual address is already mapped!");
+                    current_syscall_error.type = seL4_DeleteFirst;
+                    return seL4_DeleteFirst;
+                }
+            }
+
+            curr_vaddr += frame_size_val;
+        }
+
+        for (int i = 0; i < num; i++) {
+
+            lu_ret[i].cap = cap_frame_cap_set_capFMappedASID(lu_ret[i].cap, asid);
+            lu_ret[i].cap = cap_frame_cap_set_capFMappedAddress(lu_ret[i].cap, vaddr);
+            paddr_t base = pptr_to_paddr((void *)cap_frame_cap_get_capFBasePtr(lu_ret[i].cap));
+            vm_rights_t vmRights =  maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
+                                                    rightsFromWord(rights_word));
+
+            if (frame_size == ARMSmallPage) {
+                performSmallPageInvocationMap(asid, lu_ret[i].cap, lu_ret[i].slot,
+                                              makeUser3rdLevel(base, vmRights, attributes), lookup_pt_ret[i].ptSlot);
+            } else if (frame_size == ARMLargePage) {
+                performLargePageInvocationMap(asid, cap, cte,
+                                              makeUser2ndLevel(base, vmRights, attributes), lookup_pd_ret[i].pdSlot);
+
+            } else {
+                performHugePageInvocationMap(asid, cap, cte,
+                                             makeUser1stLevel(base, vmRights, attributes), lookup_pud_ret[i].pudSlot);
+            }
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
     case ARMVSpaceClean_Data:
     case ARMVSpaceInvalidate_Data:
     case ARMVSpaceCleanInvalidate_Data:

@@ -28,7 +28,7 @@ endif()
 include(tools/internal.cmake)
 
 # Define tools used by the kernel
-set(PYTHON3 "python3" CACHE INTERNAL "")
+set(PYTHON3 "python3.9" CACHE INTERNAL "")
 RequireTool(CPP_GEN_PATH cpp_gen.sh)
 RequireTool(CIRCULAR_INCLUDES circular_includes.py)
 RequireTool(CONFIG_GEN_PATH config_gen.py)
