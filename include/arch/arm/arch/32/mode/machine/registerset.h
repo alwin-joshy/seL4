@@ -224,7 +224,7 @@ struct user_context {
     word_t registers[n_contextRegisters];
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
     user_breakpoint_state_t breakpointState;
-#endif /* CONFIG_HARDWARE_DEBUG_API */
+#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
 #ifdef CONFIG_HAVE_FPU
     user_fpu_state_t fpuState;
 #endif /* CONFIG_HAVE_FPU */

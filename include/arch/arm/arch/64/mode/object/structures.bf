@@ -411,4 +411,37 @@ tagged_union virq virqType {
 }
 #endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */
 
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+--  field securityStateControlExtended 1 -- is this necessary??
+
+block dbg_bcr {
+    padding 34
+    padding 1
+    padding 5
+    field breakpointType 4
+    field lbn 4
+    field ssc 2
+    field hmc 1
+    padding 10
+    field pmc 2
+    field enabled 1
+}
+
+-- Watchpoint control reg
+block dbg_wcr {
+    padding 34
+    padding 1
+    padding 5
+    field breakpointType 4
+    field lbn 4
+    field ssc 2
+    field hmc 1
+    padding 10
+    field pmc 2
+    field enabled 1
+}
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */
+
 #include <sel4/arch/shared_types.bf>

@@ -549,13 +549,13 @@ block dbg_bcr {
     padding 3
     field addressMask 5
     field breakpointType 4
-    field linkedBrp 4
+    field lbn 4
     field secureStateControl 2
     field hypeModeControl 1
     padding 4
     field byteAddressSelect 4
     padding 2
-    field supervisorAccess 2
+    field pmc 2
     field enabled 1
 }
 
@@ -565,7 +565,7 @@ block dbg_wcr {
     field addressMask 5
     padding 3
     field enableLinking 1
-    field linkedBrp 4
+    field lbn 4
     field secureStateControl 2
     field hypeModeControl 1
     field byteAddressSelect 8

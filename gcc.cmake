@@ -57,6 +57,7 @@ if("${CROSS_COMPILER_PREFIX}" STREQUAL "")
         if(${sel4_arch} STREQUAL "aarch32" OR ${sel4_arch} STREQUAL "arm_hyp")
             FindPrefixedGCC(
                 CROSS_COMPILER_PREFIX
+		"arm-unknown-linux-gnueabi-"
                 "arm-linux-gnueabi-"
                 "arm-linux-gnu-"
                 "arm-none-eabi-"
@@ -85,6 +86,7 @@ if("${CROSS_COMPILER_PREFIX}" STREQUAL "")
             FindPrefixedGCC(
                 CROSS_COMPILER_PREFIX
                 "arm-linux-gnueabi-"
+		"arm-unknown-linux-gnueabi-"
                 "arm-linux-gnu-"
                 "arm-none-eabi-"
             )

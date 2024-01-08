@@ -1,0 +1,867 @@
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+#include <armv/debug.h>
+
+#define DBGSDER_ENABLE_SECURE_USER_INVASIVE_DEBUG       (BIT(0))
+
+#define DBGDSCR_MDBGEN                (BIT(15))
+#define DBGDSCR_HDBGEN                (BIT(14))
+#define DBGDSCR_USER_ACCESS_DISABLE   (BIT(12))
+
+/* This bit is always RAO */
+#define DBGLSR_LOCK_IMPLEMENTED       (BIT(0))
+#define DBGLSR_LOCK_ENABLED           (BIT(1))
+#define DBGLAR_UNLOCK_VALUE           (0xC5ACCE55u)
+
+#define DBGOSLAR_LOCK_VALUE           (0xC5ACCE55u)
+
+#define DBGOSLSR_GET_OSLOCK_MODEL(v)  ((((v) >> 2u) & 0x2u) | ((v) & 0x1u))
+#define DBGOSLSR_LOCK_MODEL_NO_OSLOCK (0u)
+#define DBGOSLSR_LOCK_MODEL_OSLOCK_AND_OSSR (1u)
+#define DBGOSLSR_LOCK_MODEL_OSLOCK_ONLY (2u)
+
+#define DBGPRSR_OSLOCK                    (BIT(5))
+#define DBGPRSR_OS_DLOCK                  (BIT(6))
+
+#define DBGOSDLR_LOCK_ENABLE              (BIT(0))
+
+#define DBGAUTHSTATUS_NSI_IMPLEMENTED (BIT(1))
+#define DBGAUTHSTATUS_NSI_ENABLED     (BIT(0))
+#define DBGAUTHSTATUS_SI_IMPLEMENTED (BIT(5))
+#define DBGAUTHSTATUS_SI_ENABLED     (BIT(4))
+
+#define DBGDRAR_VALID                (MASK(2))
+#define DBGDSAR_VALID                (MASK(2))
+
+/** Describes the availability and level of support for the debug features on
+ * a particular CPU. Currently a static local singleton instance, but for
+ * multiprocessor adaptation, just make it per-CPU.
+ *
+ * The majority of the writing to the debug coprocessor is done when a thread
+ * is being context-switched to, so the code in this file always executes on
+ * the target CPU. MP adaptation should come with few surprises.
+ */
+typedef struct debug_state {
+    bool_t is_available, coprocessor_is_baseline_only, watchpoint_8b_supported,
+           non_secure_invasive_unavailable, secure_invasive_unavailable,
+           cpu_is_in_secure_mode, single_step_supported, breakpoints_supported,
+           watchpoints_supported;
+    uint8_t debug_armv;
+    uint8_t didr_version, oem_variant, oem_revision;
+} debug_state_t;
+static debug_state_t dbg;
+
+bool_t byte8WatchpointsSupported(void)
+{
+    return dbg.watchpoint_8b_supported;
+}
+
+#define SCR "p15, 0, %0, c1, c1, 0"
+#define DBGDIDR "p14,0,%0,c0,c0,0"
+/* Not guaranteed in v7, only v7.1+ */
+#define DBGDRCR ""
+#define DBGVCR "p15, 0, %0, c0, c7, 0"
+
+#define DBGDRAR_32 "p14,0,%0,c1,c0,0"
+#define DBGDRAR_64 "p14,0,%Q0,%R0,c1"
+#define DBGDSAR_32 "p14,0,%0,c2,c0,0"
+#define DBGDSAR_64 "p14,0,%Q0,%R0,c2"
+
+/* ARMv7 manual C11.11.41:
+ * "This register is required in all implementations."
+ * "In v7.1 DBGPRSR is not visible in the CP14 interface."
+ */
+#define DBGPRSR "p14, 0, %0, c1, c5, 4"
+
+#define DBGOSLAR "p14,0,%0,c1,c0,4"
+/* ARMv7 manual: C11.11.32:
+ * "In any implementation, software can read this register to detect whether
+ * the OS Save and Restore mechanism is implemented. If it is not implemented
+ * the read of DBGOSLSR.OSLM returns zero."
+ */
+#define DBGOSLSR "p14,0,%0,c1,c1,4"
+
+/* ARMv7 manual: C11.11.30:
+ * "This register is only visible in the CP14 interface."
+ * "In v7 Debug, this register is not implemented."
+ * "In v7.1 Debug, this register is required in all implementations."
+ */
+#define DBGOSDLR "p14, 0, %0, c1, c3, 4"
+
+#define DBGDEVID2 "p14,0,%0,c7,c0,7"
+#define DBGDEVID1 "p14,0,%0,c7,c1,7"
+#define DBGDEVID "p14,0,%0,c7,c2,7"
+#define DBGDEVTYPE ""
+
+/* ARMv7 manual: C11.11.1: DBGAUTHSTATUS:
+    * "This register is required in all implementations."
+ * However, in v7, it is only visible in the memory mapped interface.
+ * However, in the v6 manual, this register is not mentioned at all and doesn't
+ * exist.
+ */
+#define DBGAUTHSTATUS "p14,0,%0,c7,c14,6"
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */
+
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+
+#define DBGBCR_ENABLE                 (BIT(0))
+#define DBGWCR_ENABLE                 (BIT(0))
+
+#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+
+/* ARM allows watchpoint trigger on load, load-exclusive, and "swap" accesses.
+ * store, store-exclusive and "swap" accesses. All accesses.
+ *
+ * The mask defines which bits are EXCLUDED from the comparison.
+ * Always program the DBGDWVR with a WORD aligned address, and use the BAS to
+ * state which bits form part of the match.
+ *
+ * It seems the BAS works as a bitmask of bytes to select in the range.
+ *
+ * To detect support for the 8-bit BAS field:
+ *  * If the 8-bit BAS is unsupported, then BAS[7:4] is RAZ/WI.
+ *
+ * When using an 8-byte watchpoint that is not dword aligned, the result is
+ * undefined. You should program it as the aligned base of the range, and select
+ * only the relevant bytes then.
+ *
+ * You cannot do sparse byte selection: you either select a single byte in the
+ * BAS or you select a contiguous range. ARM has deprecated sparse byte
+ * selection.
+ */
+
+/** Convert a watchpoint size (0, 1, 2, 4 or 8 bytes) into the arch specific
+ * register encoding.
+ */
+static word_t convertSizeToArch(word_t size)
+{
+    switch (size) {
+    case 1:
+        return 0x1;
+    case 2:
+        return 0x3;
+    case 8:
+        return 0xFF;
+    default:
+        assert(size == 4);
+        return 0xF;
+    }
+}
+
+/** Convert an access perms API value (seL4_BreakOnRead, etc) into the register
+ * encoding that matches it.
+ */
+static word_t convertAccessToArch(word_t access)
+{
+    switch (access) {
+    case seL4_BreakOnRead:
+        return DBGWCR_ACCESS_LOAD;
+    case seL4_BreakOnWrite:
+        return DBGWCR_ACCESS_STORE;
+    default:
+        assert(access == seL4_BreakOnReadWrite);
+        return DBGWCR_ACCESS_EITHER;
+    }
+}
+
+
+/** For debugging: prints out the debug register pair values as returned by the
+ * coprocessor.
+ *
+ * @param nBp Number of breakpoint reg pairs to print, starting at BP #0.
+ * @param nBp Number of watchpoint reg pairs to print, starting at WP #0.
+ */
+UNUSED static void dumpBpsAndWpsCp(int nBp, int nWp)
+{
+    int i;
+
+    for (i = 0; i < nBp; i++) {
+        userError("CP BP %d: Bcr %lx, Bvr %lx", i, readBcrCp(i), readBvrCp(i));
+    }
+
+    for (i = 0; i < nWp; i++) {
+        userError("CP WP %d: Wcr %lx, Wvr %lx", i, readWcrCp(i), readWvrCp(i));
+    }
+}
+
+/** Print a thread's saved debug context. For debugging. This differs from
+ * dumpBpsAndWpsCp in that it reads from a thread's saved register context, and
+ * not from the hardware coprocessor registers.
+ *
+ * @param at arch_tcb_t where the thread's reg context is stored.
+ * @param nBp Number of BP regs to print, beginning at BP #0.
+ * @param mWp Number of WP regs to print, beginning at WP #0.
+ */
+UNUSED static void dumpBpsAndWpsContext(tcb_t *t, int nBp, int nWp)
+{
+    int i;
+
+    for (i = 0; i < nBp; i++) {
+        userError("Ctxt BP %d: Bcr %lx, Bvr %lx", i, readBcrContext(t, i), readBvrContext(t, i));
+    }
+
+    for (i = 0; i < nWp; i++) {
+        userError("Ctxt WP %d: Wcr %lx, Wvr %lx", i, readWcrContext(t, i), readWvrContext(t, i));
+    }
+}
+
+/** Retrieves the current configuration of a hardware breakpoint for a given
+ * thread.
+ *
+ * Doesn't modify the configuration of that thread's breakpoints.
+ *
+ * @param at arch_tcb_t that holds the register context for the thread you wish
+ *           to query.
+ * @param bp_num Hardware breakpoint ID.
+ * @return A struct describing the current configuration of the requested
+ *         breakpoint.
+ */
+getBreakpoint_t getBreakpoint(tcb_t *t, uint16_t bp_num)
+{
+    getBreakpoint_t ret;
+
+    ret.type = getTypeFromBpNum(bp_num);
+    bp_num = convertBpNumToArch(bp_num);
+
+    if (ret.type == seL4_InstructionBreakpoint) {
+        dbg_bcr_t bcr;
+
+        bcr.words[0] = readBcrContext(t, bp_num);
+        if (Arch_breakpointIsMismatch(bcr) == true) {
+            ret.type = seL4_SingleStep;
+        };
+        ret.size = 0;
+        ret.rw = seL4_BreakOnRead;
+        ret.vaddr = readBvrContext(t, bp_num);
+        ret.is_enabled = dbg_bcr_get_enabled(bcr);
+    } else {
+        dbg_wcr_t wcr;
+
+        wcr.words[0] = readWcrContext(t, bp_num);
+        ret.size = convertArchToSize(dbg_wcr_get_byteAddressSelect(wcr));
+        ret.rw = convertArchToAccess(dbg_wcr_get_loadStore(wcr));
+        ret.vaddr = readWvrContext(t, bp_num);
+        ret.is_enabled = dbg_wcr_get_enabled(wcr);
+    }
+    return ret;
+}
+
+/** Extracts the "Method of Entry" bits from DBGDSCR.
+ *
+ * Used to determine what type of debug exception has occurred.
+ */
+static inline word_t getMethodOfEntry(void)
+{
+    dbg_dscr_t dscr;
+
+    dscr.words[0] = readDscrCp();
+    return dbg_dscr_get_methodOfEntry(dscr);
+}
+
+/** Using the DBGDIDR register, detects the debug architecture version, and
+ * does a preliminary check for the level of support for our debug API.
+ *
+ * Reads DBGDIDR, which is guaranteed to be read safely. Then
+ * determine whether or not we can or should proceed.
+ *
+ * The majority of the debug setup is concerned with trying to tell which
+ * registers are safe to access on this CPU. The debug architecture is wildly
+ * different across different CPUs and platforms, so genericity is fairly
+ * challenging.
+ */
+BOOT_CODE static void initVersionInfo(void)
+{
+    dbg_didr_t didr;
+
+    didr.words[0] = getDIDR();
+    dbg.oem_revision = dbg_didr_get_revision(didr);
+    dbg.oem_variant = dbg_didr_get_variant(didr);
+    dbg.didr_version = dbg_didr_get_version(didr);
+    dbg.coprocessor_is_baseline_only = true;
+    dbg.breakpoints_supported = dbg.watchpoints_supported =
+                                    dbg.single_step_supported = true;
+
+    switch (dbg.didr_version) {
+    case 0x1:
+        dbg.debug_armv = 0x60;
+        dbg.single_step_supported = false;
+        break;
+    case 0x2:
+        dbg.debug_armv = 0x61;
+        break;
+    case 0x3:
+        dbg.debug_armv = 0x70;
+        dbg.coprocessor_is_baseline_only = false;
+        break;
+    case 0x4:
+        dbg.debug_armv = 0x70;
+        break;
+    case 0x5:
+        dbg.debug_armv = 0x71;
+        dbg.coprocessor_is_baseline_only = false;
+        break;
+    case 0x6:
+        dbg.debug_armv = 0x80;
+        dbg.coprocessor_is_baseline_only = false;
+        break;
+    default:
+        dbg.is_available = false;
+        dbg.debug_armv = 0;
+        return;
+    }
+
+    dbg.is_available = true;
+}
+
+/** Load an initial, all-disabled setup state for the registers.
+ */
+BOOT_CODE static void disableAllBpsAndWps(void)
+{
+    int i;
+
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        writeBvrCp(i, 0);
+        writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+    }
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        writeWvrCp(i, 0);
+        writeWcrCp(i, readWcrCp(i) & ~DBGWCR_ENABLE);
+    }
+
+    isb();
+}
+
+/** Guides the debug hardware initialization sequence.
+ *
+ * In short, there is a small set of registers, the "baseline" registers, which
+ * are guaranteed to be available on all ARM debug architecture implementations.
+ * Aside from those, the rest are a *COMPLETE* toss-up, and detection is
+ * difficult, because if you access any particular register which is
+ * unavailable on an implementation, you trigger an #UNDEFINED exception. And
+ * there is little uniformity or consistency.
+ *
+ * In addition, there are as many as 3 lock registers, all of which have
+ * effects on which registers you can access...and only one of them is
+ * consistently implemented. The others may or may not be implemented, and well,
+ * you have to grope in the dark to determine whether or not they are...but
+ * if they are implemented, their effect on software is still upheld, of course.
+ *
+ * Much of this sequence is catering for the different versions and determining
+ * which registers and locks are implemented, and creating a common register
+ * environment for the rest of the API code.
+ *
+ * There are several conditions which will cause the code to exit and give up.
+ * For the most part, most implementations give you the baseline registers and
+ * some others. When an implementation only supports the baseline registers and
+ * nothing more, you're told so, and that basically means you can't do anything
+ * with it because you have no reliable access to the debug registers.
+ */
+BOOT_CODE bool_t Arch_initHardwareBreakpoints(void)
+{
+    word_t dbgosdlr, dbgoslsr;
+
+    /* The functioning of breakpoints on ARM requires that certain external
+     * pin signals be enabled. If these are not enabled, there is nothing
+     * that can be done from software. If these are enabled, we can then
+     * select the debug-mode we want by programming the CP14 interface.
+     *
+     * Of the four modes available, we want monitor mode, because only monitor
+     * mode delivers breakpoint and watchpoint events to the kernel as
+     * exceptions. The other modes cause a break into "debug mode" or ignore
+     * debug events.
+     */
+    memset(&dbg, 0, sizeof(dbg));
+
+    initVersionInfo();
+    if (dbg.is_available == false) {
+        printf("Debug architecture not implemented.\n");
+        return false;
+    }
+
+    printf("DIDRv: %x, armv %x, coproc baseline only? %s.\n",
+           dbg.didr_version, dbg.debug_armv,
+           ((dbg.coprocessor_is_baseline_only) ? "yes" : "no"));
+
+    if (dbg.debug_armv > 0x61) {
+        if (dbg.coprocessor_is_baseline_only) {
+            printf("ARMDBG: No reliable access to DBG regs.\n");
+            return dbg.is_available = false;
+        }
+
+        /* Interestingly, since the debug features have so many bits that
+         * behave differently pending the state of secure-mode, ARM had to
+         * expose a bit in the debug coprocessor that reveals whether or not the
+         * CPU is in secure mode, or else it would be semi-impossible to program
+         * this feature.
+         */
+        dbg.cpu_is_in_secure_mode = !(readDscrCp() & DBGDSCR_SECURE_MODE_DISABLED);
+        if (dbg.cpu_is_in_secure_mode) {
+            word_t sder;
+
+            printf("CPU is in secure mode. Enabling debugging in secure user mode.\n");
+            MRC(DBGSDER, sder);
+            MCR(DBGSDER, sder
+                | DBGSDER_ENABLE_SECURE_USER_INVASIVE_DEBUG);
+        }
+
+        /* Deal with OS Double-lock: */
+        if (dbg.debug_armv == 0x71) {
+            /* ARMv7 manuals, C11.11.30:
+             * "In v7.1 Debug, this register is required in all implementations."
+             */
+            MRC(DBGOSDLR, dbgosdlr);
+            MCR(DBGOSDLR, dbgosdlr & ~DBGOSDLR_LOCK_ENABLE);
+        } else if (dbg.debug_armv == 0x70) {
+            /* ARMv7 manuals, C11.11.30:
+             * "In v7 Debug, this register is not implemented."
+             *
+             * So no need to do anything for debug v7.0.
+             */
+        }
+
+        /* Now deal with OS lock: ARMv7 manual, C11.11.32:
+         *  "In any implementation, software can read this register to detect
+         *   whether the OS Save and Restore mechanism is implemented. If it is
+         *   not implemented the read of DBGOSLSR.OSLM returns zero."
+         */
+        MRC(DBGOSLSR, dbgoslsr);
+        if (DBGOSLSR_GET_OSLOCK_MODEL(dbgoslsr) != DBGOSLSR_LOCK_MODEL_NO_OSLOCK) {
+            MCR(DBGOSLAR, ~DBGOSLAR_LOCK_VALUE);
+        }
+
+        disableAllBpsAndWps();
+        if (!enableMonitorMode()) {
+            return dbg.is_available = false;
+        }
+    } else {
+        /* On v6 you have to enable monitor mode first. */
+        if (!enableMonitorMode()) {
+            return dbg.is_available = false;
+        }
+        disableAllBpsAndWps();
+    }
+
+    /* Finally, also pre-load some initial register state that can be used
+     * for all new threads so that their initial saved debug register state
+     * is valid when it's first loaded onto the CPU.
+     */
+    for (int i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        armKSNullBreakpointState.breakpoint[i].cr = readBcrCp(i) & ~DBGBCR_ENABLE;
+    }
+    for (int i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        armKSNullBreakpointState.watchpoint[i].cr = readWcrCp(i) & ~DBGWCR_ENABLE;
+    }
+
+    dbg.watchpoint_8b_supported = watchpoint8bSupported();
+    return true;
+}
+
+static uint16_t getBpNumFromType(uint16_t bp_num, word_t type)
+{
+    assert(type == seL4_InstructionBreakpoint || type == seL4_DataBreakpoint
+           || type == seL4_SingleStep);
+
+    switch (type) {
+    case seL4_InstructionBreakpoint:
+    case seL4_SingleStep:
+        return bp_num;
+    default: /* seL4_DataBreakpoint: */
+        assert(type == seL4_DataBreakpoint);
+        return bp_num + seL4_NumExclusiveBreakpoints;
+    }
+}
+
+/** Abstract wrapper around the IFSR/DFSR fault status values.
+ *
+ * Format of the FSR bits is different for long and short descriptors, so
+ * extract the FSR bits and accompany them with a boolean.
+ */
+typedef struct fault_status {
+    uint8_t status;
+    bool_t is_long_desc_format;
+} fault_status_t;
+
+static fault_status_t getFaultStatus(word_t hsr_or_fsr)
+{
+    fault_status_t ret;
+
+    /* Hyp mode uses the HSR, Hype syndrome register. */
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+    /* the HSR only uses the long descriptor format. */
+    ret.is_long_desc_format = true;
+    /* FSR[5:0]. */
+    ret.status = hsr_or_fsr & 0x3F;
+#else
+    /* Non-hyp uses IFSR/DFSR */
+    if (hsr_or_fsr & BIT(FSR_LPAE_SHIFT)) {
+        ret.is_long_desc_format = true;
+        /* FSR[5:0] */
+        ret.status = hsr_or_fsr & 0x3F;
+    } else {
+        ret.is_long_desc_format = false;
+        /* FSR[10] | FSR[3:0]. */
+        ret.status = (hsr_or_fsr & BIT(FSR_STATUS_BIT4_SHIFT)) >> FSR_STATUS_BIT4_SHIFT;
+        ret.status <<= 4;
+        ret.status = hsr_or_fsr & 0xF;
+    }
+#endif
+
+    return ret;
+}
+
+/** Called to determine if an abort was a debug exception.
+ *
+ * The ARM debug exceptions look like Prefetch Aborts or Data Aborts, and you
+ * have to examine some extra register state to determine whether or not the
+ * abort you currently have on your hands is actually a debug exception.
+ *
+ * This routine takes care of the checks.
+ * @param fs An abstraction of the DFSR/IFSR values, meant to make it irrelevant
+ *           whether we're using the long/short descriptors. Bit positions and
+ *           values change. This also makes the debug code forward compatible
+ *           aarch64.
+ */
+bool_t isDebugFault(word_t hsr_or_fsr)
+{
+    fault_status_t fs;
+
+    fs = getFaultStatus(hsr_or_fsr);
+    if (fs.is_long_desc_format) {
+        if (fs.status == FSR_LONGDESC_STATUS_DEBUG_EVENT) {
+            return true;
+        }
+    } else {
+        if (fs.status == FSR_SHORTDESC_STATUS_DEBUG_EVENT) {
+            return true;
+        }
+    }
+
+    if (getMethodOfEntry() == DEBUG_ENTRY_ASYNC_WATCHPOINT) {
+        userError("Debug: Watchpoint delivered as async abort.");
+        return true;
+    }
+    return false;
+}
+
+/** Called to process a debug exception.
+ *
+ * On x86, you're told which breakpoint register triggered the exception. On
+ * ARM, you're told the virtual address that triggered the exception and what
+ * type of access (data access vs instruction execution) triggered the exception
+ * and you have to figure out which register triggered it.
+ *
+ * For watchpoints, it's not very complicated: just check to see which
+ * register matches the virtual address.
+ *
+ * For breakpoints, it's a bit more complex: since both breakpoints and single-
+ * stepping are configured using the same registers, we need to first detect
+ * whether single-stepping is enabled. If not, then we check for a breakpoint.
+ * @param fault_vaddr The instruction vaddr which triggered the exception, as
+ *                    extracted by the kernel.
+ */
+seL4_Fault_t handleUserLevelDebugException(word_t fault_vaddr)
+{
+#ifdef TRACK_KERNEL_ENTRIES
+    ksKernelEntry.path = Entry_DebugFault;
+    ksKernelEntry.word = fault_vaddr;
+#endif
+
+    word_t method_of_entry = getMethodOfEntry();
+    int i, active_bp;
+    seL4_Fault_t ret;
+    word_t bp_reason, bp_vaddr;
+
+    switch (method_of_entry) {
+    case DEBUG_ENTRY_BREAKPOINT:
+        bp_reason = seL4_InstructionBreakpoint;
+        bp_vaddr = fault_vaddr;
+
+        /* Could have been triggered by:
+         *  1. An actual breakpoint.
+         *  2. A breakpoint configured in mismatch mode to emulate
+         *  single-stepping.
+         *
+         * If the register is configured for mismatch, then it's a single-step
+         * exception. If the register is configured for match, then it's a
+         * normal breakpoint exception.
+         */
+        for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+            dbg_bcr_t bcr;
+
+            bcr.words[0] = readBcrCp(i);
+            if (!dbg_bcr_get_enabled(bcr) || Arch_breakpointIsMismatch(bcr) != true) {
+                continue;
+            }
+            /* Return the first BP enabled and configured for mismatch. */
+            bp_reason = seL4_SingleStep;
+            active_bp = i;
+            break;
+        }
+        break;
+
+    case DEBUG_ENTRY_SYNC_WATCHPOINT:
+        bp_reason = seL4_DataBreakpoint;
+#ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+        /* Sync watchpoint sets the BP vaddr in HDFAR. */
+        bp_vaddr = getHDFAR();
+#else
+        bp_vaddr = getFAR();
+#endif
+        break;
+
+    case DEBUG_ENTRY_ASYNC_WATCHPOINT:
+        bp_reason = seL4_DataBreakpoint;
+        /* Async WP sets the WP vaddr in DBGWFAR for both hyp and non-hyp. */
+        bp_vaddr = getWFAR();
+        break;
+
+    default: /* EXPLICIT_BKPT: BKPT instruction */
+        assert(method_of_entry == DEBUG_ENTRY_EXPLICIT_BKPT);
+        bp_reason = seL4_SoftwareBreakRequest;
+        bp_vaddr = fault_vaddr;
+        active_bp = 0;
+    }
+
+    if (method_of_entry != DEBUG_ENTRY_EXPLICIT_BKPT
+        && bp_reason != seL4_SingleStep) {
+        active_bp = getAndResetActiveBreakpoint(bp_vaddr,
+                                                bp_reason);
+        assert(active_bp >= 0);
+    }
+
+    /* There is no hardware register associated with BKPT instruction
+     * triggers.
+     */
+    if (bp_reason != seL4_SoftwareBreakRequest) {
+        /* Convert the hardware BP num back into an API-ID */
+        active_bp = getBpNumFromType(active_bp, bp_reason);
+    }
+    ret = seL4_Fault_DebugException_new(bp_vaddr, active_bp, bp_reason);
+    return ret;
+}
+
+
+/** Determines which breakpoint or watchpoint register caused the debug
+ * exception to be triggered.
+ *
+ * Checks to see which hardware breakpoint was triggered, and saves
+ * the ID of that breakpoint.
+ * There is no short way to do this on ARM. On x86 there is a status
+ * register that tells you which watchpoint has been triggered. On ARM
+ * there is no such register, so you have to manually check each to see which
+ * one was triggered.
+ *
+ * The arguments also work a bit differently from x86 as well. On x86 the
+ * 2 arguments are dummy values, while on ARM, they contain useful information.
+ *
+ * @param vaddr The virtual address stored in the IFSR/DFSR register, which
+ *              is either the watchpoint address or breakpoint address.
+ * @param reason The presumed reason for the exception, which is based on
+ *               whether it was a prefetch or data abort.
+ * @return Struct with a member "bp_num", which is a positive integer if we
+ *         successfully detected which debug register triggered the exception.
+ *         "Bp_num" will be negative otherwise.
+ */
+static int getAndResetActiveBreakpoint(word_t vaddr, word_t reason)
+{
+    word_t align_mask;
+    int i, ret = -1;
+
+    if (reason == seL4_InstructionBreakpoint) {
+        for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+            dbg_bcr_t bcr;
+            word_t bvr = readBvrCp(i);
+
+            bcr.words[0] = readBcrCp(i);
+            /* The actual trigger address may be an unaligned sub-byte of the
+             * range, which means it's not guaranteed to match the aligned value
+             * that was programmed into the address register.
+             */
+            align_mask = convertArchToSize(dbg_bcr_get_byteAddressSelect(bcr));
+            align_mask = ~(align_mask - 1);
+
+            if (bvr != (vaddr & align_mask) || !dbg_bcr_get_enabled(bcr)) {
+                continue;
+            }
+
+            ret = i;
+            return ret;
+        }
+    }
+
+    if (reason == seL4_DataBreakpoint) {
+        for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+            dbg_wcr_t wcr;
+            word_t wvr = readWvrCp(i);
+
+            wcr.words[0] = readWcrCp(i);
+            align_mask = convertArchToSize(dbg_wcr_get_byteAddressSelect(wcr));
+            align_mask = ~(align_mask - 1);
+
+            if (wvr != (vaddr & align_mask) || !dbg_wcr_get_enabled(wcr)) {
+                continue;
+            }
+
+            ret = i;
+            return ret;
+        }
+    }
+
+    return ret;
+}
+
+/** Initiates or halts single-stepping on the target process.
+ *
+ * @param at arch_tcb_t for the target process to be configured.
+ * @param bp_num The hardware ID of the breakpoint register to be used.
+ * @param n_instr The number of instructions to step over.
+ */
+bool_t configureSingleStepping(tcb_t *t,
+                               uint16_t bp_num,
+                               word_t n_instr,
+                               bool_t is_reply)
+{
+
+    if (is_reply) {
+        bp_num = t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num;
+    } else {
+        bp_num = convertBpNumToArch(bp_num);
+    }
+
+    /* On ARM single-stepping is emulated using breakpoint mismatches. So you
+     * would basically set the breakpoint to mismatch everything, and this will
+     * cause an exception to be triggered on every instruction.
+     *
+     * We use NULL as the mismatch address since no code should be trying to
+     * execute NULL, so it's a perfect address to use as the mismatch
+     * criterion. An alternative might be to use an address in the kernel's
+     * high vaddrspace, since that's an address that it's impossible for
+     * userspace to be executing at.
+     */
+    dbg_bcr_t bcr;
+
+    bcr.words[0] = readBcrContext(t, bp_num);
+
+    /* If the user calls us with n_instr == 0, allow them to configure, but
+     * leave it disabled.
+     */
+    if (n_instr > 0) {
+        bcr = dbg_bcr_set_enabled(bcr, 1);
+        t->tcbArch.tcbContext.breakpointState.single_step_enabled = true;
+    } else {
+        bcr = dbg_bcr_set_enabled(bcr, 0);
+        t->tcbArch.tcbContext.breakpointState.single_step_enabled = false;
+    }
+
+    bcr = dbg_bcr_set_linkedBrp(bcr, 0);
+    bcr = dbg_bcr_set_supervisorAccess(bcr, DBGBCR_PRIV_USER);
+    bcr = dbg_bcr_set_byteAddressSelect(bcr, convertSizeToArch(1));
+    bcr = Arch_setupBcr(bcr, false);
+
+    writeBvrContext(t, bp_num, 0);
+    writeBcrContext(t, bp_num, bcr.words[0]);
+
+    t->tcbArch.tcbContext.breakpointState.n_instructions = n_instr;
+    t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num = bp_num;
+    return true;
+}
+
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */
+
+
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+
+void loadAllDisabledBreakpointState(void)
+{
+    int i;
+
+    /* We basically just want to read-modify-write each reg to ensure its
+     * "ENABLE" bit is clear. We did preload the register context with the
+     * reserved values from the control registers, so we can read our
+     * initial values from either the coprocessor or the thread's register
+     * context.
+     *
+     * Both are perfectly fine, and the only discriminant factor is performance.
+     * I suspect that reading from RAM is faster than reading from the
+     * coprocessor, but I can't be sure.
+     */
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+    }
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        writeWcrCp(i, readWcrCp(i) & ~WCR_ENABLE);
+    }
+}
+
+/* We only need to save the breakpoint state in the hypervisor
+ * build, and only for threads that have an associated VCPU.
+ *
+ * When the normal kernel is running with the debug API, all
+ * changes to the debug regs are done through the debug API.
+ * In the hypervisor build, the guest VM has full access to the
+ * debug regs in PL1, so we need to save its values on vmexit.
+ *
+ * When saving the debug regs we will always save all of them.
+ * When restoring, we will restore only those that have been used
+ * for native threads; and we will restore all of them
+ * unconditionally for VCPUs (because we don't know which of
+ * them have been changed by the guest).
+ *
+ * To ensure that all the debug regs are restored unconditionally,
+ * we just set the "used_breakpoints_bf" bitfield to all 1s in
+ * associateVcpu.
+ */
+void saveAllBreakpointState(tcb_t *t)
+{
+    int i;
+
+    assert(t != NULL);
+
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        writeBvrContext(t, i, readBvrCp(i));
+        writeBcrContext(t, i, readBcrCp(i));
+    }
+
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        writeWvrContext(t, i, readWvrCp(i));
+        writeWcrContext(t, i, readWcrCp(i));
+    }
+}
+
+static void loadBreakpointState(tcb_t *t)
+{
+    int i;
+
+    assert(t != NULL);
+
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf & BIT(i)) {
+            writeBvrCp(i, readBvrContext(t, i));
+            writeBcrCp(i, readBcrContext(t, i));
+        } else {
+            /* If the thread isn't using the BP, then just load
+             * a default "disabled" state.
+             */
+            writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+        }
+    }
+
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &
+            BIT(i + seL4_NumExclusiveBreakpoints)) {
+            writeWvrCp(i, readWvrContext(t, i));
+            writeWcrCp(i, readWcrContext(t, i));
+        } else {
+            writeWcrCp(i, readWcrCp(i) & ~DBGBCR_ENABLE);
+        }
+    }
+}
+
+
+#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
