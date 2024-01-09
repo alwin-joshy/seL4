@@ -113,6 +113,41 @@ bool_t byte8WatchpointsSupported(void)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
+/** Convert an arch specific encoded watchpoint size back into a simple integer
+ * representation.
+ */
+static word_t convertArchToSize(word_t archsize)
+{
+    switch (archsize) {
+    case 0x1:
+        return 1;
+    case 0x3:
+        return 2;
+    case 0xFF:
+        return 8;
+    default:
+        assert(archsize == 0xF);
+        return 4;
+    }
+}
+
+/** Convert an arch-specific register encoding back into an API access perms
+ * value.
+ */
+static word_t convertArchToAccess(word_t archaccess)
+{
+    switch (archaccess) {
+    case DBGWCR_ACCESS_LOAD:
+        return seL4_BreakOnRead;
+    case DBGWCR_ACCESS_STORE:
+        return seL4_BreakOnWrite;
+    default:
+        assert(archaccess == DBGWCR_ACCESS_EITHER);
+        return seL4_BreakOnReadWrite;
+    }
+}
+
+
 
 /* ARM allows watchpoint trigger on load, load-exclusive, and "swap" accesses.
  * store, store-exclusive and "swap" accesses. All accesses.
@@ -773,95 +808,3 @@ bool_t configureSingleStepping(tcb_t *t,
 
 
 #endif /* CONFIG_HARDWARE_DEBUG_API */
-
-
-#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
-
-void loadAllDisabledBreakpointState(void)
-{
-    int i;
-
-    /* We basically just want to read-modify-write each reg to ensure its
-     * "ENABLE" bit is clear. We did preload the register context with the
-     * reserved values from the control registers, so we can read our
-     * initial values from either the coprocessor or the thread's register
-     * context.
-     *
-     * Both are perfectly fine, and the only discriminant factor is performance.
-     * I suspect that reading from RAM is faster than reading from the
-     * coprocessor, but I can't be sure.
-     */
-    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-        writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
-    }
-    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
-        writeWcrCp(i, readWcrCp(i) & ~WCR_ENABLE);
-    }
-}
-
-/* We only need to save the breakpoint state in the hypervisor
- * build, and only for threads that have an associated VCPU.
- *
- * When the normal kernel is running with the debug API, all
- * changes to the debug regs are done through the debug API.
- * In the hypervisor build, the guest VM has full access to the
- * debug regs in PL1, so we need to save its values on vmexit.
- *
- * When saving the debug regs we will always save all of them.
- * When restoring, we will restore only those that have been used
- * for native threads; and we will restore all of them
- * unconditionally for VCPUs (because we don't know which of
- * them have been changed by the guest).
- *
- * To ensure that all the debug regs are restored unconditionally,
- * we just set the "used_breakpoints_bf" bitfield to all 1s in
- * associateVcpu.
- */
-void saveAllBreakpointState(tcb_t *t)
-{
-    int i;
-
-    assert(t != NULL);
-
-    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-        writeBvrContext(t, i, readBvrCp(i));
-        writeBcrContext(t, i, readBcrCp(i));
-    }
-
-    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
-        writeWvrContext(t, i, readWvrCp(i));
-        writeWcrContext(t, i, readWcrCp(i));
-    }
-}
-
-static void loadBreakpointState(tcb_t *t)
-{
-    int i;
-
-    assert(t != NULL);
-
-    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-        if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf & BIT(i)) {
-            writeBvrCp(i, readBvrContext(t, i));
-            writeBcrCp(i, readBcrContext(t, i));
-        } else {
-            /* If the thread isn't using the BP, then just load
-             * a default "disabled" state.
-             */
-            writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
-        }
-    }
-
-    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
-        if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &
-            BIT(i + seL4_NumExclusiveBreakpoints)) {
-            writeWvrCp(i, readWvrContext(t, i));
-            writeWcrCp(i, readWcrContext(t, i));
-        } else {
-            writeWcrCp(i, readWcrCp(i) & ~DBGBCR_ENABLE);
-        }
-    }
-}
-
-
-#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */

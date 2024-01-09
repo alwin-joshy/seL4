@@ -115,40 +115,6 @@ static void writeWvrContext(tcb_t *t, uint16_t index, word_t val)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
-/** Convert an arch specific encoded watchpoint size back into a simple integer
- * representation.
- */
-static word_t convertArchToSize(word_t archsize)
-{
-    switch (archsize) {
-    case 0x1:
-        return 1;
-    case 0x3:
-        return 2;
-    case 0xFF:
-        return 8;
-    default:
-        assert(archsize == 0xF);
-        return 4;
-    }
-}
-
-/** Convert an arch-specific register encoding back into an API access perms
- * value.
- */
-static word_t convertArchToAccess(word_t archaccess)
-{
-    switch (archaccess) {
-    case DBGWCR_ACCESS_LOAD:
-        return seL4_BreakOnRead;
-    case DBGWCR_ACCESS_STORE:
-        return seL4_BreakOnWrite;
-    default:
-        assert(archaccess == DBGWCR_ACCESS_EITHER);
-        return seL4_BreakOnReadWrite;
-    }
-}
-
 /** Sets up the requested hardware breakpoint register.
  *
  * Acts as the backend for seL4_TCB_SetBreakpoint. Doesn't actually operate
@@ -248,6 +214,28 @@ void unsetBreakpoint(tcb_t *t, uint16_t bp_num)
         wcr = dbg_wcr_set_enabled(wcr, 0);
         writeWcrContext(t, bp_num, wcr.words[0]);
         writeWvrContext(t, bp_num, 0);
+    }
+}
+
+void loadAllDisabledBreakpointState(void)
+{
+    int i;
+
+    /* We basically just want to read-modify-write each reg to ensure its
+     * "ENABLE" bit is clear. We did preload the register context with the
+     * reserved values from the control registers, so we can read our
+     * initial values from either the coprocessor or the thread's register
+     * context.
+     *
+     * Both are perfectly fine, and the only discriminant factor is performance.
+     * I suspect that reading from RAM is faster than reading from the
+     * coprocessor, but I can't be sure.
+     */
+    for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+        writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+    }
+    for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+        writeWcrCp(i, readWcrCp(i) & ~DBGWCR_ENABLE);
     }
 }
 

@@ -11,6 +11,7 @@
 #include <kernel/thread.h>
 #include <arch/kernel/thread.h>
 #include <machine/debug.h>
+#include <mode/machine/debug.h>
 #ifdef CONFIG_KERNEL_MCS
 #include <mode/api/ipc_buffer.h>
 #include <object/schedcontext.h>

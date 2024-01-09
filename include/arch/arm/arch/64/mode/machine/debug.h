@@ -6,37 +6,30 @@
 
 #pragma once
 
-#include <util.h>
-#include <api/types.h>
+// #include <object/structures.h>
+// #include <util.h>
+// #include <config.h>
+// #include <api/types.h>
+// #include <arch/machine/debug_conf.h>
+// #include <arch/machine/registerset.h>
+// #include <sel4/plat/api/constants.h>
+// #include <armv/debug.h>
+// #include <armv/machine.h>
+// #include <api/failures.h>
+
+#include <config.h>
+#include <types.h>
+#include <api/failures.h>
+#include <object/structures.h>
 #include <arch/machine/debug_conf.h>
-#include <sel4/plat/api/constants.h>
-#include <armv/debug.h>
+#include <armv/machine.h>
+
 
 #define DBGBCR_ENABLE                 (BIT(0))
 #define DBGWCR_ENABLE                 (BIT(0))
 
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
-
-/** These next two functions are part of some state flags.
- *
- * A bitfield of all currently enabled breakpoints for a thread is kept in that
- * thread's TCB. These two functions here set and unset the bits in that
- * bitfield.
- */
-static inline void setBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
-{
-    if (t != NULL) {
-        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf |= BIT(bp_num);
-    }
-}
-
-static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
-{
-    if (t != NULL) {
-        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &= ~BIT(bp_num);
-    }
-}
 
 static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t, uint16_t bp_num, word_t n_instr, bool_t is_reply)
 {
@@ -118,12 +111,10 @@ static inline syscall_error_t Arch_decodeUnsetBreakpoint(tcb_t *t, uint16_t bp_n
     return ret;
 }
 
-#define MAKE_P14(crn, crm, opc2) "p14, 0, %0, c" #crn ", c" #crm ", " #opc2
-#define MAKE_DBGBVR(num) MAKE_P14(0, num, 4)
-#define MAKE_DBGBCR(num) MAKE_P14(0, num, 5)
-#define MAKE_DBGWVR(num) MAKE_P14(0, num, 6)
-#define MAKE_DBGWCR(num) MAKE_P14(0, num, 7)
-#define MAKE_DBGXVR(num) MAKE_P14(1, num, 1)
+#define MAKE_DBGBVR(num) "DBGBVR" #num "_EL1"
+#define MAKE_DBGBCR(num) "DBGBCR" #num "_EL1"
+#define MAKE_DBGWVR(num) "DBGWVR" #num "_EL1"
+#define MAKE_DBGWCR(num) "DBGWCR" #num "_EL1"
 
 /** Generates read functions for the CP14 control and value registers.
  */

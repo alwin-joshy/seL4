@@ -82,6 +82,8 @@
 #include <util.h>
 #include <arch/types.h>
 #include <sel4/plat/api/constants.h>
+#include <arch/machine/debug_conf.h>
+#include <arch/machine/debug.h>
 
 /* These are the indices of the registers in the saved thread context.
  * The values are determined by the order in which they're saved in the trap handler. */
@@ -232,7 +234,7 @@ extern const register_t msgRegisters[];
 extern const register_t frameRegisters[];
 extern const register_t gpRegisters[];
 
-// #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
 typedef struct debug_register_pair {
     word_t cr, vr;
 } debug_register_pair_t;
@@ -256,7 +258,7 @@ typedef struct user_breakpoint_state {
     word_t n_instructions;
     bool_t single_step_enabled;
 } user_breakpoint_state_t;
-// #endif
+#endif
 
 
 #ifdef CONFIG_HAVE_FPU
@@ -277,9 +279,9 @@ typedef struct user_fpu_state {
  */
 struct user_context {
     word_t registers[n_contextRegisters];
-// #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
     user_breakpoint_state_t breakpointState;
-// #endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
+#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
 #ifdef CONFIG_HAVE_FPU
     user_fpu_state_t fpuState;
 #endif /* CONFIG_HAVE_FPU */

@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <arch/smp/ipi_inline.h>
 #include <arch/machine/debug.h>
+#include <mode/machine/debug.h>
 
 #define NULL_PRIO 0
 

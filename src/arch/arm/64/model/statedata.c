@@ -124,3 +124,9 @@ compile_assert(smmuStateCBCNodeSize, sizeof(smmuStateCBNode) >= ((SMMU_MAX_CB) *
 /*recording the context bank to ASID relationship*/
 asid_t smmuStateCBAsidTable[SMMU_MAX_CB];
 #endif
+
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+/* Null state for the Debug coprocessor's break/watchpoint registers */
+user_breakpoint_state_t armKSNullBreakpointState;
+#endif
+
