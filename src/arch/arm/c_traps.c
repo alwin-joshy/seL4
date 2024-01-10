@@ -18,7 +18,17 @@
 #include <kgdb/kgdb.h>
 #endif /* CONFIG_GDB */
 #include <arch/machine.h>
+#include <mode/machine/debug.h>
 
+#define ESR_EXCEPTION_CLASS_MASK 0xFC000000
+#define ESR_EXCEPTION_CLASS_OFF 26
+
+static bool_t is_debug_fault(word_t exception_class) {
+    return (exception_class == DEBUG_ENTRY_BREAKPOINT ||
+            exception_class == DEBUG_ENTRY_SINGLE_STEP ||
+            exception_class == DEBUG_ENTRY_WATCHPOINT ||
+            exception_class == DEBUG_ENTRY_EXPLICIT_BKPT);
+}
 void VISIBLE NORETURN c_handle_undefined_instruction(void)
 {
     NODE_LOCK_SYS;
@@ -73,6 +83,20 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
 #ifdef CONFIG_ARCH_AARCH32
     handleUserLevelFault(0, 0);
 #else
+#ifdef CONFIG_HARDWARE_DEBUG_API
+    word_t exception_class = (getESR() & ESR_EXCEPTION_CLASS_MASK) >> ESR_EXCEPTION_CLASS_OFF;
+    if (is_debug_fault(exception_class)) {
+        MCS_DO_IF_BUDGET({
+            current_fault = handleUserLevelDebugException(exception_class, getRestartPC(NODE_STATE(ksCurThread)));
+            handleFault(NODE_STATE(ksCurThread));
+        })
+
+        schedule();
+        activateThread();
+        restore_user_context();
+        UNREACHABLE();
+    }
+#endif
     handleUserLevelFault(getESR(), 0);
 #endif
     restore_user_context();
