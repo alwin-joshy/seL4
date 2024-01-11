@@ -239,6 +239,22 @@ exception_t handleUserLevelFault(word_t w_a, word_t w_b)
     return EXCEPTION_NONE;
 }
 
+#ifdef CONFIG_ARCH_AARCH64
+exception_t handleDebugFaultEvent(word_t exception_class)
+{
+    MCS_DO_IF_BUDGET({
+        current_fault = handleUserLevelDebugException(exception_class, getRestartPC(NODE_STATE(ksCurThread)));
+        if (seL4_Fault_get_seL4_FaultType(current_fault) != seL4_Fault_NullFault) {
+            handleFault(NODE_STATE(ksCurThread));
+        }
+    })
+    schedule();
+    activateThread();
+
+    return EXCEPTION_NONE;
+}
+#endif
+
 exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType)
 {
     MCS_DO_IF_BUDGET({
