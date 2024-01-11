@@ -21,6 +21,7 @@
 
 #define MDSCR_MDE (BIT(15))
 #define MDSCR_SS  (BIT(0))
+#define SPSR_SS   (BIT(21))
 
 #define ESR_EXCEPTION_CLASS_MASK 0xFC000000
 #define ESR_EXCEPTION_CLASS_OFF 26
@@ -608,6 +609,7 @@ bool_t configureSingleStepping(tcb_t *t, uint16_t bp_num, word_t n_instr,
 
     if (n_instr > 0) {
         /* Enable single stepping */
+        userError("Enabling!");
         t->tcbArch.tcbContext.breakpointState.single_step_enabled = true;
     } else {
         /* Disable single stepping */
@@ -1049,16 +1051,20 @@ void restore_user_debug_context(tcb_t *target_thread) {
     }
 
     /* Set/unset single stepping if applicable */
-    word_t mdscr = 0;
+    word_t mdscr = 0, spsr = 0;
     MRS("MDSCR_EL1", mdscr);
+    spsr = getRegister(target_thread, SPSR_EL1);
     if (target_thread->tcbArch.tcbContext.breakpointState.single_step_enabled) {
         /* Enable single stepping */
         mdscr |= MDSCR_SS;
+        spsr |= SPSR_SS;
     } else {
         /* Disable single stepping */
         mdscr &= ~MDSCR_SS;
+        spsr &= ~SPSR_SS;
     }
-    MRS("MDSCR_EL1", mdscr);
+    MSR("MDSCR_EL1", mdscr);
+    setRegister(target_thread, SPSR_EL1, spsr);
 
   /* ARMv7 manual, sec C3.7:
    * "Usually, an exception return sequence is a context change operation as
