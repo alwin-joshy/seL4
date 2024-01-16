@@ -24,6 +24,7 @@
 #include <string.h>
 #include <kernel/traps.h>
 #include <arch/machine.h>
+#include <mode/machine/debug.h>
 #ifdef ENABLE_SMP_SUPPORT
 #include <smp/ipi.h>
 #endif
