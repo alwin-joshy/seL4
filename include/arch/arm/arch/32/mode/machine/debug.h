@@ -297,7 +297,7 @@ static inline void initHDCR(void)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
-static uint16_t convertBpNumToArch(uint16_t bp_num)
+static inline uint16_t convertBpNumToArch(uint16_t bp_num)
 {
     if (bp_num >= seL4_NumExclusiveBreakpoints) {
         bp_num -= seL4_NumExclusiveBreakpoints;

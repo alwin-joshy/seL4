@@ -24,6 +24,7 @@
 #include <string.h>
 #include <kernel/traps.h>
 #include <arch/machine.h>
+#include <mode/machine/debug.h>
 #ifdef CONFIG_GDB
 #include <kgdb/kgdb.h>
 #endif
