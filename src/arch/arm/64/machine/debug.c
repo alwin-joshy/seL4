@@ -43,131 +43,6 @@ enum watchpoint_privilege /* WCR[2:1] */ {
   DBGWCR_PRIV_EITHER = 3u
 };
 
-
-
-#endif /* CONFIG_HARDWARE_DEBUG_API */
-
-#ifdef CONFIG_HARDWARE_DEBUG_API
-
-/** Sets up the requested hardware breakpoint register.
- *
- * Acts as the backend for seL4_TCB_SetBreakpoint. Doesn't actually operate
- * on the hardware coprocessor, but just modifies the thread's debug register
- * context. The thread will pop off the updated register context when it is
- * popping its context the next time it runs.
- *
- * On ARM the hardware breakpoints are consumed by all operations, including
- * single-stepping, unlike x86, where single-stepping doesn't require the use
- * of an actual hardware breakpoint register (just uses the EFLAGS.TF bit).
- *
- * @param at arch_tcb_t that points to the register context of the thread we
- *           want to modify.
- * @param bp_num The hardware register we want to set up.
- * @params vaddr, type, size, rw: seL4 API values for seL4_TCB_SetBreakpoint.
- *         All documented in the seL4 API Manuals.
- */
-void setBreakpoint(tcb_t *t, uint16_t bp_num, word_t vaddr, word_t type,
-                   word_t size, word_t rw) {
-  bp_num = convertBpNumToArch(bp_num);
-
-  if (type == seL4_InstructionBreakpoint) {
-    dbg_bcr_t bcr;
-
-    writeBvrContext(t, bp_num, vaddr);
-
-    /* Preserve reserved bits. */
-    bcr.words[0] = readBcrContext(t, bp_num);
-    bcr = dbg_bcr_set_enabled(bcr, 1);
-    bcr = dbg_bcr_set_lbn(bcr, 0);
-    bcr = dbg_bcr_set_pmc(bcr, DBGBCR_PRIV_USER);
-    bcr = Arch_setupBcr(bcr, true);
-    writeBcrContext(t, bp_num, bcr.words[0]);
-  } else {
-    dbg_wcr_t wcr;
-
-    writeWvrContext(t, bp_num, vaddr);
-
-    /* Preserve reserved bits */
-    // @alwin: Move some of this stuff into Arch_setupWcr() eventually
-    wcr.words[0] = readWcrContext(t, bp_num);
-    wcr = dbg_wcr_set_enabled(wcr, 1);
-    wcr = dbg_wcr_set_pac(wcr, DBGWCR_PRIV_USER);
-    wcr = dbg_wcr_set_watchpointType(wcr, 0);
-    wcr = dbg_wcr_set_bas(wcr, convertSizeToArch(size));
-    wcr = dbg_wcr_set_addressMask(wcr, 0);
-    wcr = dbg_wcr_set_lsc(wcr, convertAccessToArch(rw));
-    wcr = dbg_wcr_set_lbn(wcr, 0);
-    wcr = dbg_wcr_set_hmc(wcr, 0);
-    wcr = dbg_wcr_set_ssc(wcr, 0);
-    writeWcrContext(t, bp_num, wcr.words[0]);
-  }
-}
-
-/** Retrieves the current configuration of a hardware breakpoint for a given
- * thread.
- *
- * Doesn't modify the configuration of that thread's breakpoints.
- *
- * @param at arch_tcb_t that holds the register context for the thread you wish
- *           to query.
- * @param bp_num Hardware breakpoint ID.
- * @return A struct describing the current configuration of the requested
- *         breakpoint.
- */
-getBreakpoint_t getBreakpoint(tcb_t *t, uint16_t bp_num) {
-  getBreakpoint_t ret;
-
-  ret.type = getTypeFromBpNum(bp_num);
-  bp_num = convertBpNumToArch(bp_num);
-
-  if (ret.type == seL4_InstructionBreakpoint) {
-    dbg_bcr_t bcr;
-
-    bcr.words[0] = readBcrContext(t, bp_num);
-    ret.size = 0;
-    ret.rw = seL4_BreakOnRead;
-    ret.vaddr = readBvrContext(t, bp_num);
-    ret.is_enabled = dbg_bcr_get_enabled(bcr);
-  } else {
-    dbg_wcr_t wcr;
-
-    wcr.words[0] = readWcrContext(t, bp_num);
-    ret.size = convertArchToSize(dbg_wcr_get_bas(wcr));
-    ret.rw = convertArchToAccess(dbg_wcr_get_lsc(wcr));
-    ret.vaddr = readWvrContext(t, bp_num);
-    ret.is_enabled = dbg_wcr_get_enabled(wcr);
-  }
-  return ret;
-}
-
-/** Disables and clears the configuration of a hardware breakpoint.
- *
- * @param at arch_tcb_t holding the reg context for the target thread.
- * @param bp_num The hardware breakpoint you want to disable+clear.
- */
-void unsetBreakpoint(tcb_t *t, uint16_t bp_num) {
-  word_t type;
-
-  type = getTypeFromBpNum(bp_num);
-  bp_num = convertBpNumToArch(bp_num);
-
-  if (type == seL4_InstructionBreakpoint) {
-    dbg_bcr_t bcr;
-
-    bcr.words[0] = readBcrContext(t, bp_num);
-    bcr = dbg_bcr_set_enabled(bcr, 0);
-    writeBcrContext(t, bp_num, bcr.words[0]);
-    writeBvrContext(t, bp_num, 0);
-  } else {
-    dbg_wcr_t wcr;
-
-    wcr.words[0] = readWcrContext(t, bp_num);
-    wcr = dbg_wcr_set_enabled(wcr, 0);
-    writeWcrContext(t, bp_num, wcr.words[0]);
-    writeWvrContext(t, bp_num, 0);
-  }
-}
-
 /** Initiates or halts single-stepping on the target process.
  *
  * @param at arch_tcb_t for the target process to be configured.
@@ -189,38 +64,28 @@ bool_t configureSingleStepping(tcb_t *t, uint16_t bp_num, word_t n_instr,
     return true;
 }
 
-/** Guides the debug hardware initialization sequence.
- *
- * In short, there is a small set of registers, the "baseline" registers, which
- * are guaranteed to be available on all ARM debug architecture implementations.
- * Aside from those, the rest are a *COMPLETE* toss-up, and detection is
- * difficult, because if you access any particular register which is
- * unavailable on an implementation, you trigger an #UNDEFINED exception. And
- * there is little uniformity or consistency.
- *
- * In addition, there are as many as 3 lock registers, all of which have
- * effects on which registers you can access...and only one of them is
- * consistently implemented. The others may or may not be implemented, and well,
- * you have to grope in the dark to determine whether or not they are...but
- * if they are implemented, their effect on software is still upheld, of course.
- *
- * Much of this sequence is catering for the different versions and determining
- * which registers and locks are implemented, and creating a common register
- * environment for the rest of the API code.
- *
- * There are several conditions which will cause the code to exit and give up.
- * For the most part, most implementations give you the baseline registers and
- * some others. When an implementation only supports the baseline registers and
- * nothing more, you're told so, and that basically means you can't do anything
- * with it because you have no reliable access to the debug registers.
- */
+/* Guides the debug hardware initialization sequence. */
 BOOT_CODE bool_t Arch_initHardwareBreakpoints(void) {
 
-  /* Setup the general the debug control register */
+  /*
+   * ARMv8 Architecture Reference Manual for A-profile Architecture
+   * D2.2: The Enable controls for each debug exception are:
+   *    ... MDSCR_EL1.MDE
+   */
+
   word_t mdscr = 0;
   MRS("MDSCR_EL1", mdscr);
   mdscr |= MDSCR_MDE;
   MSR("MDSCR_EL1", mdscr);
+
+  /*
+   * ARMv8 Architecture Reference Manual for A-profile Architecture
+   * D2.4: A debug exception can be taken only if all the following are true:
+   *    - The OS Lock is unlocked
+   *    - DoubleLockStatus() = False
+   *    - The debug exception is enabled from the current exception level
+   *    - The debug exception is enabled from the current security state
+   */
 
   /* Ensure that the OS double lock is unset */
   word_t osdlr = 0;
@@ -239,9 +104,14 @@ BOOT_CODE bool_t Arch_initHardwareBreakpoints(void) {
   //    oslar &= ~OSLAR_LOCK;
   //    MSR("oslar_el1", oslar);
   //
-  /* Ensure that all the breakpoint and watchpoint registers are initially
-  disabled */
+
+  /* Ensure that all the breakpoint and watchpoint registers are initially disabled */
   disableAllBpsAndWps();
+
+  /* Ensure that single stepping is initally disabled */
+  MRS("MDSCR_EL1", mdscr);
+  mdscr &= ~MDSCR_SS;
+  MSR("MDSCR_EL1", mdscr);
 
   /* Finally, also pre-load some initial register state that can be used
    * for all new threads so that their initial saved debug register state
@@ -270,15 +140,13 @@ BOOT_CODE bool_t Arch_initHardwareBreakpoints(void) {
  * The arguments also work a bit differently from x86 as well. On x86 the
  * 2 arguments are dummy values, while on ARM, they contain useful information.
  *
- * @param vaddr The virtual address stored in the IFSR/DFSR register, which
- *              is either the watchpoint address or breakpoint address.
- * @param reason The presumed reason for the exception, which is based on
- *               whether it was a prefetch or data abort.
+ * @param vaddr The virtual address, which is either the watchpoint address or breakpoint address.
+ * @param reason The presumed reason for the exception.
  * @return Struct with a member "bp_num", which is a positive integer if we
  *         successfully detected which debug register triggered the exception.
  *         "Bp_num" will be negative otherwise.
  */
-static UNUSED int getAndResetActiveBreakpoint(word_t vaddr, word_t reason) {
+static int getAndResetActiveBreakpoint(word_t vaddr, word_t reason) {
   int i, ret = -1;
 
   if (reason == seL4_InstructionBreakpoint) {
@@ -287,11 +155,6 @@ static UNUSED int getAndResetActiveBreakpoint(word_t vaddr, word_t reason) {
       word_t bvr = readBvrCp(i);
 
       bcr.words[0] = readBcrCp(i);
-      /* The actual trigger address may be an unaligned sub-byte of the
-       * range, which means it's not guaranteed to match the aligned value
-       * that was programmed into the address register.
-       */
-
       if (bvr != vaddr || !dbg_bcr_get_enabled(bcr)) {
         continue;
       }
