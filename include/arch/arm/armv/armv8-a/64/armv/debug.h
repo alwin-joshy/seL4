@@ -10,6 +10,8 @@
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
+#define DBGBCR_BAS_A64 0xF
+
 enum v8_breakpoint_type {
     DBGBCR_TYPE_UNLINKED_INSTRUCTION_MATCH = 0u,
     DBGBCR_TYPE_LINKED_INSTRUCTION_MATCH = 0x1u,
@@ -33,14 +35,31 @@ enum v8_breakpoint_type {
     DBGBCR_TYPE_LINKED_FULL_CONTEXT_ID_MATCH = 0xFu,
 };
 
-static inline dbg_bcr_t Arch_setupBcr(dbg_bcr_t in_val, bool_t is_match)
+static inline dbg_bcr_t Arch_setupBcr(dbg_bcr_t in_val, UNUSED bool_t is_match)
 {
     dbg_bcr_t bcr = dbg_bcr_set_hmc(in_val, 0);
     bcr = dbg_bcr_set_ssc(bcr, 0);
-    bcr = dbg_bcr_set_bas(bcr, 0xF);
+    bcr = dbg_bcr_set_bas(bcr, DBGBCR_BAS_A64);
     bcr = dbg_bcr_set_breakpointType(bcr, DBGBCR_TYPE_UNLINKED_INSTRUCTION_MATCH);
     return bcr;
 }
 
-#endif
+/** Convert a watchpoint size (0, 1, 2, 4 or 8 bytes) into the arch specific
+ * register encoding.
+ */
+static inline word_t convertSizeToArch(word_t size) {
+  switch (size) {
+  case 1:
+    return 0x1;
+  case 2:
+    return 0x3;
+  case 8:
+    return 0xFF;
+  default:
+    assert(size == 4);
+    return 0xF;
+  }
+}
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */
 
