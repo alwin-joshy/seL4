@@ -34,6 +34,8 @@ static inline void writeDscrCp(word_t val)
 {
     MCR(DBGDSCR_ext, val);
 }
+
+
 #endif /* CONFIG_HARDWARE_DEBUG_API CONFIG_EXPORT_PMU_USER */
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
@@ -57,6 +59,23 @@ enum v7_breakpoint_type {
     DBGBCR_TYPE_UNLINKED_VMID_AND_CONTEXT_MATCH = 0xAu,
     DBGBCR_TYPE_LINKED_VMID_AND_CONTEXT_MATCH = 0xBu
 };
+
+/** Convert a watchpoint size (0, 1, 2, 4 or 8 bytes) into the arch specific
+ * register encoding.
+ */
+static inline word_t convertSizeToArch(word_t size) {
+  switch (size) {
+  case 1:
+    return 0x1;
+  case 2:
+    return 0x3;
+  case 8:
+    return 0xFF;
+  default:
+    assert(size == 4);
+    return 0xF;
+  }
+}
 
 
 /** Determines whether or not 8-byte watchpoints are supported.
@@ -136,29 +155,40 @@ BOOT_CODE static bool_t enableMonitorMode(void)
     return true;
 }
 
+/* C3.3.4: "A debugger can use either byte address selection or address range
+ *  masking, if it is implemented. However, it must not attempt to use both at
+ * the same time"
+ *
+ * "v7 Debug and v7.1 Debug deprecate any use of the DBGBCR.MASK field."
+ * ^ So prefer to use DBGBCR.BAS instead. When using masking, you must set
+ * BAS to all 1s, and when using BAS you must set the MASK field to all 0s.
+ *
+ * To detect support for BPAddrMask:
+ *  * When it's unsupported: DBGBCR.MASK is always RAZ/WI, and EITHER:
+ *      * DBGIDR.DEVID_tmp is RAZ
+ *      * OR DBGIDR.DEVID_tmp is RAO and DBGDEVID.{CIDMask, BPAddrMask} are RAZ.
+ *  * OR:
+ *      * DBGDEVID.BPAddrMask indicates whether addr masking is supported.
+ *      * DBGBCR.MASK is UNK/SBZP.
+ *
+ * Setting BAS to 0b0000 makes the cpu break on every instruction.
+ * Be aware that the processor checks the MASK before the BAS.
+ * You must set BAS to 0b1111 for all context match comparisons.
+ */
 static inline dbg_bcr_t Arch_setupBcr(dbg_bcr_t in_val, bool_t is_match)
 {
     dbg_bcr_t bcr;
 
     bcr = dbg_bcr_set_addressMask(in_val, 0);
-    bcr = dbg_bcr_set_hypeModeControl(bcr, 0);
-    bcr = dbg_bcr_set_secureStateControl(bcr, 0);
+    bcr = dbg_bcr_set_hmc(bcr, 0);
+    bcr = dbg_bcr_set_ssc(bcr, 0);
+    bcr = dbg_bcr_set_bas(bcr, convertSizeToArch(4));
     if (is_match) {
         bcr = dbg_bcr_set_breakpointType(bcr, DBGBCR_TYPE_UNLINKED_INSTRUCTION_MATCH);
     } else {
         bcr = dbg_bcr_set_breakpointType(bcr, DBGBCR_TYPE_UNLINKED_INSTRUCTION_MISMATCH);
     }
     return bcr;
-}
-
-static inline dbg_wcr_t Arch_setupWcr(dbg_wcr_t in_val)
-{
-    dbg_wcr_t wcr;
-
-    wcr = dbg_wcr_set_addressMask(in_val, 0);
-    wcr = dbg_wcr_set_hypeModeControl(wcr, 0);
-    wcr = dbg_wcr_set_secureStateControl(wcr, 0);
-    return wcr;
 }
 
 static inline bool_t Arch_breakpointIsMismatch(dbg_bcr_t in_val)

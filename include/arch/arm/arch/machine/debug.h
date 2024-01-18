@@ -14,15 +14,12 @@
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
-// @alwin: Putting this at the top to get around the error feels like a hack
-static inline uint16_t convertBpNumToArch(uint16_t bp_num)
-{
-    if (bp_num >= seL4_NumExclusiveBreakpoints) {
-        bp_num -= seL4_NumExclusiveBreakpoints;
-    }
-    return bp_num;
-}
-
+enum watchpoint_access /* WCR[4:3] */ {
+  DBGWCR_ACCESS_RESERVED = 0u,
+  DBGWCR_ACCESS_LOAD = 1u,
+  DBGWCR_ACCESS_STORE = 2u,
+  DBGWCR_ACCESS_EITHER = 3u
+};
 
 /* These next few functions (read*Context()/write*Context()) read from TCB
  * context and not from the hardware registers.
@@ -94,121 +91,11 @@ static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
 #define DBGBCR_ENABLE (BIT(0))
 #define DBGWCR_ENABLE (BIT(0))
 
-/** Generates read functions for the CP14 control and value registers.
- */
-#define DEBUG_GENERATE_READ_FN(_name, _reg)                                    \
-  static word_t _name(uint16_t bp_num) {                                       \
-    word_t ret;                                                                \
-                                                                               \
-    switch (bp_num) {                                                          \
-    case 1:                                                                    \
-      MRS(MAKE_##_reg(1), ret);                                                \
-      return ret;                                                              \
-    case 2:                                                                    \
-      MRS(MAKE_##_reg(2), ret);                                                \
-      return ret;                                                              \
-    case 3:                                                                    \
-      MRS(MAKE_##_reg(3), ret);                                                \
-      return ret;                                                              \
-    case 4:                                                                    \
-      MRS(MAKE_##_reg(4), ret);                                                \
-      return ret;                                                              \
-    case 5:                                                                    \
-      MRS(MAKE_##_reg(5), ret);                                                \
-      return ret;                                                              \
-    case 6:                                                                    \
-      MRS(MAKE_##_reg(6), ret);                                                \
-      return ret;                                                              \
-    case 7:                                                                    \
-      MRS(MAKE_##_reg(7), ret);                                                \
-      return ret;                                                              \
-    case 8:                                                                    \
-      MRS(MAKE_##_reg(8), ret);                                                \
-      return ret;                                                              \
-    case 9:                                                                    \
-      MRS(MAKE_##_reg(9), ret);                                                \
-      return ret;                                                              \
-    case 10:                                                                   \
-      MRS(MAKE_##_reg(10), ret);                                               \
-      return ret;                                                              \
-    case 11:                                                                   \
-      MRS(MAKE_##_reg(11), ret);                                               \
-      return ret;                                                              \
-    case 12:                                                                   \
-      MRS(MAKE_##_reg(12), ret);                                               \
-      return ret;                                                              \
-    case 13:                                                                   \
-      MRS(MAKE_##_reg(13), ret);                                               \
-      return ret;                                                              \
-    case 14:                                                                   \
-      MRS(MAKE_##_reg(14), ret);                                               \
-      return ret;                                                              \
-    case 15:                                                                   \
-      MRS(MAKE_##_reg(15), ret);                                               \
-      return ret;                                                              \
-    default:                                                                   \
-      assert(bp_num == 0);                                                     \
-      MRS(MAKE_##_reg(0), ret);                                                \
-      return ret;                                                              \
-    }                                                                          \
-  }
+void restore_user_debug_context(tcb_t *target_thread);
+void saveAllBreakpointState(tcb_t *t);
+void loadAllDisabledBreakpointState(void);
 
-/** Generates write functions for the CP14 control and value registers.
- */
-#define DEBUG_GENERATE_WRITE_FN(_name, _reg)                                   \
-  static void _name(uint16_t bp_num, word_t val) {                             \
-    switch (bp_num) {                                                          \
-    case 1:                                                                    \
-      MSR(MAKE_##_reg(1), val);                                                \
-      return;                                                                  \
-    case 2:                                                                    \
-      MSR(MAKE_##_reg(2), val);                                                \
-      return;                                                                  \
-    case 3:                                                                    \
-      MSR(MAKE_##_reg(3), val);                                                \
-      return;                                                                  \
-    case 4:                                                                    \
-      MSR(MAKE_##_reg(4), val);                                                \
-      return;                                                                  \
-    case 5:                                                                    \
-      MSR(MAKE_##_reg(5), val);                                                \
-      return;                                                                  \
-    case 6:                                                                    \
-      MSR(MAKE_##_reg(6), val);                                                \
-      return;                                                                  \
-    case 7:                                                                    \
-      MSR(MAKE_##_reg(7), val);                                                \
-      return;                                                                  \
-    case 8:                                                                    \
-      MSR(MAKE_##_reg(8), val);                                                \
-      return;                                                                  \
-    case 9:                                                                    \
-      MSR(MAKE_##_reg(9), val);                                                \
-      return;                                                                  \
-    case 10:                                                                   \
-      MSR(MAKE_##_reg(10), val);                                               \
-      return;                                                                  \
-    case 11:                                                                   \
-      MSR(MAKE_##_reg(11), val);                                               \
-      return;                                                                  \
-    case 12:                                                                   \
-      MSR(MAKE_##_reg(12), val);                                               \
-      return;                                                                  \
-    case 13:                                                                   \
-      MSR(MAKE_##_reg(13), val);                                               \
-      return;                                                                  \
-    case 14:                                                                   \
-      MSR(MAKE_##_reg(14), val);                                               \
-      return;                                                                  \
-    case 15:                                                                   \
-      MSR(MAKE_##_reg(15), val);                                               \
-      return;                                                                  \
-    default:                                                                   \
-      assert(bp_num == 0);                                                     \
-      MSR(MAKE_##_reg(0), val);                                                \
-      return;                                                                  \
-    }                                                                          \
-  }
+
 
 DEBUG_GENERATE_READ_FN(readBcrCp, DBGBCR)
 DEBUG_GENERATE_READ_FN(readBvrCp, DBGBVR)
@@ -259,7 +146,13 @@ UNUSED static void dumpBpsAndWpsContext(tcb_t *t, int nBp, int nWp) {
   }
 }
 
-
+static inline uint16_t convertBpNumToArch(uint16_t bp_num)
+{
+    if (bp_num >= seL4_NumExclusiveBreakpoints) {
+        bp_num -= seL4_NumExclusiveBreakpoints;
+    }
+    return bp_num;
+}
 
 static inline word_t getTypeFromBpNum(uint16_t bp_num)
 {
@@ -297,34 +190,24 @@ static inline syscall_error_t Arch_decodeUnsetBreakpoint(tcb_t *t, uint16_t bp_n
     return ret;
 }
 
-
-
+syscall_error_t Arch_decodeSetBreakpoint(tcb_t *t,
+                                         uint16_t bp_num, word_t vaddr, word_t type,
+                                         word_t size, word_t rw);
+syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
+                                                   uint16_t bp_num,
+                                                   word_t n_instr,
+                                                   bool_t is_reply);
 
 #endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
-/** Convert a watchpoint size (0, 1, 2, 4 or 8 bytes) into the arch specific
- * register encoding.
- */
-static inline word_t convertSizeToArch(word_t size) {
-  switch (size) {
-  case 1:
-    return 0x1;
-  case 2:
-    return 0x3;
-  case 8:
-    return 0xFF;
-  default:
-    assert(size == 4);
-    return 0xF;
-  }
-}
+
 
 /** Convert an arch specific encoded watchpoint size back into a simple integer
  * representation.
  */
-static word_t convertArchToSize(word_t archsize) {
+static inline word_t convertArchToSize(word_t archsize) {
   switch (archsize) {
   case 0x1:
     return 1;
@@ -341,7 +224,7 @@ static word_t convertArchToSize(word_t archsize) {
 /** Convert an access perms API value (seL4_BreakOnRead, etc) into the register
  * encoding that matches it.
  */
-static word_t convertAccessToArch(word_t access) {
+static inline word_t convertAccessToArch(word_t access) {
   switch (access) {
   case seL4_BreakOnRead:
     return DBGWCR_ACCESS_LOAD;
@@ -356,7 +239,7 @@ static word_t convertAccessToArch(word_t access) {
 /** Convert an arch-specific register encoding back into an API access perms
  * value.
  */
-static word_t convertArchToAccess(word_t archaccess) {
+static inline word_t convertArchToAccess(word_t archaccess) {
   switch (archaccess) {
   case DBGWCR_ACCESS_LOAD:
     return seL4_BreakOnRead;
@@ -368,7 +251,7 @@ static word_t convertArchToAccess(word_t archaccess) {
   }
 }
 
-static uint16_t getBpNumFromType(uint16_t bp_num, word_t type) {
+static inline uint16_t getBpNumFromType(uint16_t bp_num, word_t type) {
   assert(type == seL4_InstructionBreakpoint || type == seL4_DataBreakpoint ||
          type == seL4_SingleStep);
 
@@ -402,39 +285,7 @@ BOOT_CODE static void disableAllBpsAndWps(void) {
 
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
 
-/* We only need to save the breakpoint state in the hypervisor
- * build, and only for threads that have an associated VCPU.
- *
- * When the normal kernel is running with the debug API, all
- * changes to the debug regs are done through the debug API.
- * In the hypervisor build, the guest VM has full access to the
- * debug regs in PL1, so we need to save its values on vmexit.
- *
- * When saving the debug regs we will always save all of them.
- * When restoring, we will restore only those that have been used
- * for native threads; and we will restore all of them
- * unconditionally for VCPUs (because we don't know which of
- * them have been changed by the guest).
- *
- * To ensure that all the debug regs are restored unconditionally,
- * we just set the "used_breakpoints_bf" bitfield to all 1s in
- * associateVcpu.
- */
-void saveAllBreakpointState(tcb_t *t) {
-  int i;
 
-  assert(t != NULL);
-
-  for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
-    writeBvrContext(t, i, readBvrCp(i));
-    writeBcrContext(t, i, readBcrCp(i));
-  }
-
-  for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
-    writeWvrContext(t, i, readWvrCp(i));
-    writeWcrContext(t, i, readWcrCp(i));
-  }
-}
 
 static void loadBreakpointState(tcb_t *t) {
   int i;
