@@ -157,7 +157,7 @@ bool_t isDebugFault(word_t esr);
  * This could be handling a single-stepping exception, or a breakpoint or
  * watchpoint.
  */
-seL4_Fault_t handleUserLevelDebugException(word_t exception_class, word_t fault_vaddr);
+seL4_Fault_t handleUserLevelDebugException(word_t esr, word_t fault_vaddr);
 
 static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
                                                                  uint16_t bp_num,
