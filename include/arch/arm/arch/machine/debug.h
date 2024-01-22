@@ -95,7 +95,10 @@ void restore_user_debug_context(tcb_t *target_thread);
 void saveAllBreakpointState(tcb_t *t);
 void loadAllDisabledBreakpointState(void);
 
-
+#ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
+void Arch_debugAssociateVCPUTCB(tcb_t *t);
+void Arch_debugDissociateVCPUTCB(tcb_t *t);
+#endif
 
 DEBUG_GENERATE_READ_FN(readBcrCp, DBGBCR)
 DEBUG_GENERATE_READ_FN(readBvrCp, DBGBVR)

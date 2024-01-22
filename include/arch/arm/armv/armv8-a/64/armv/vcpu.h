@@ -641,6 +641,30 @@ static inline void vcpu_enable(vcpu_t *vcpu)
     isb();
 
     set_gic_vcpu_ctrl_hcr(vcpu->vgic.hcr);
+
+#if !defined(ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS) && defined(ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS)
+    /* This is guarded by an #ifNdef (negation) ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
+     * because if it wasn't, we'd be calling restore_user_debug_context twice
+     * on a debug-API build; recall that restore_user_debug_context is called
+     * in restore_user_context.
+     *
+     * We call restore_user_debug_context here, because vcpu_restore calls this
+     * function (vcpu_enable). It's better to embed the
+     * restore_user_debug_context call in here than to call it in the outer
+     * level caller (vcpu_switch), because if the structure of this VCPU code
+     * changes later on, it will be less likely that the person who changes
+     * the code will be able to omit the debug register context restore, if
+     * it's done here.
+     */
+    restore_user_debug_context(vcpu->vcpuTCB);
+#endif
+#if defined(ARM_HYP_TRAP_CP14_IN_NATIVE_USER_THREADS)
+    /* Disable debug exception trapping and let the PL1 Guest VM handle all
+     * of its own debug faults.
+     */
+    setHDCRTrapDebugExceptionState(false);
+#endif
+
 #ifdef CONFIG_HAVE_FPU
     vcpu_restore_reg(vcpu, seL4_VCPUReg_CPACR);
 #endif
@@ -671,6 +695,21 @@ static inline void vcpu_disable(vcpu_t *vcpu)
     isb();
     setHCR(HCR_NATIVE);
     isb();
+
+#if defined(ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS)
+    /* Disable all breakpoint registers from triggering their
+     * respective events, so that when we switch from a guest VM
+     * to a native thread, the native thread won't trigger events
+     * that were caused by things the guest VM did.
+     */
+    loadAllDisabledBreakpointState();
+#endif
+#if defined(ARM_HYP_TRAP_CP14_IN_NATIVE_USER_THREADS)
+    /* Enable debug exception trapping and let seL4 trap all PL0 (user) native
+     * seL4 threads' debug exceptions, so it can deliver them as fault messages.
+     */
+    setHDCRTrapDebugExceptionState(true);
+#endif
 
 #ifdef CONFIG_HAVE_FPU
     /* Allow FPU instructions in EL0 and EL1 for native

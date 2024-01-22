@@ -779,23 +779,7 @@ seL4_Fault_t handleUserLevelDebugException(word_t fault_vaddr)
 #endif /* CONFIG_HARDWARE_DEBUG_API */
 
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
-#ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
-void Arch_debugAssociateVCPUTCB(tcb_t *t)
-{
-    /* Don't attempt to shift beyond end of word. */
-    assert(seL4_NumHWBreakpoints < sizeof(word_t) * 8);
 
-    /* Set all the bits to 1, so loadBreakpointState() will
-     * restore all the debug regs unconditionally.
-     */
-    t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf = MASK(seL4_NumHWBreakpoints);
-}
-
-void Arch_debugDissociateVCPUTCB(tcb_t *t)
-{
-    t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf = 0;
-}
-#endif
 
 /** Pops debug register context for a thread into the CPU.
  *

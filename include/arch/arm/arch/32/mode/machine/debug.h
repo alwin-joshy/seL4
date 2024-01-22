@@ -406,10 +406,6 @@ static inline void initHDCR(void)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
-
-
 bool_t byte8WatchpointsSupported(void);
-
-
 
 #endif /* CONFIG_HARDWARE_DEBUG_API */
