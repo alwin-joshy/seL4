@@ -167,28 +167,245 @@ bool_t isDebugFault(word_t hsr_or_fsr);
  */
 seL4_Fault_t handleUserLevelDebugException(word_t fault_vaddr);
 
-/** These next two functions are part of some state flags.
- *
- * A bitfield of all currently enabled breakpoints for a thread is kept in that
- * thread's TCB. These two functions here set and unset the bits in that
- * bitfield.
- */
-static inline void setBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
-{
-    if (t != NULL) {
-        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf |= BIT(bp_num);
-    }
-}
-
-static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
-{
-    if (t != NULL) {
-        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &= ~BIT(bp_num);
-    }
-}
-
 #endif /* CONFIG_HARDWARE_DEBUG_API */
 
 #endif /* !__ASSEMBLER__ */
 
 #endif /* defined(CONFIG_DEBUG_BUILD) || defined (CONFIG_HARDWARE_DEBUG_API) */
+
+#include <util.h>
+#include <api/types.h>
+#include <arch/machine/debug_conf.h>
+#include <sel4/plat/api/constants.h>
+#include <armv/debug.h>
+
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+void restore_user_debug_context(tcb_t *target_thread);
+void saveAllBreakpointState(tcb_t *t);
+void loadAllDisabledBreakpointState(void);
+
+/** Generates read functions for the CP14 control and value registers.
+ */
+#define DEBUG_GENERATE_READ_FN(_name, _reg) \
+static word_t \
+_name(uint16_t bp_num) \
+{ \
+    word_t ret; \
+ \
+    switch (bp_num) { \
+    case 1: \
+        MRC(MAKE_ ## _reg(1), ret); \
+        return ret; \
+    case 2: \
+        MRC(MAKE_ ## _reg(2), ret); \
+        return ret; \
+    case 3: \
+        MRC(MAKE_ ## _reg(3), ret); \
+        return ret; \
+    case 4: \
+        MRC(MAKE_ ## _reg(4), ret); \
+        return ret; \
+    case 5: \
+        MRC(MAKE_ ## _reg(5), ret); \
+        return ret; \
+    case 6: \
+        MRC(MAKE_ ## _reg(6), ret); \
+        return ret; \
+    case 7: \
+        MRC(MAKE_ ## _reg(7), ret); \
+        return ret; \
+    case 8: \
+        MRC(MAKE_ ## _reg(8), ret); \
+        return ret; \
+    case 9: \
+        MRC(MAKE_ ## _reg(9), ret); \
+        return ret; \
+    case 10: \
+        MRC(MAKE_ ## _reg(10), ret); \
+        return ret; \
+    case 11: \
+        MRC(MAKE_ ## _reg(11), ret); \
+        return ret; \
+    case 12: \
+        MRC(MAKE_ ## _reg(12), ret); \
+        return ret; \
+    case 13: \
+        MRC(MAKE_ ## _reg(13), ret); \
+        return ret; \
+    case 14: \
+        MRC(MAKE_ ## _reg(14), ret); \
+        return ret; \
+    case 15: \
+        MRC(MAKE_ ## _reg(15), ret); \
+        return ret; \
+    default: \
+        assert(bp_num == 0); \
+        MRC(MAKE_ ## _reg(0), ret); \
+        return ret; \
+    } \
+}
+
+/** Generates write functions for the CP14 control and value registers.
+ */
+#define DEBUG_GENERATE_WRITE_FN(_name, _reg)  \
+static void \
+_name(uint16_t bp_num, word_t val) \
+{ \
+    switch (bp_num) { \
+    case 1: \
+        MCR(MAKE_ ## _reg(1), val); \
+        return; \
+    case 2: \
+        MCR(MAKE_ ## _reg(2), val); \
+        return; \
+    case 3: \
+        MCR(MAKE_ ## _reg(3), val); \
+        return; \
+    case 4: \
+        MCR(MAKE_ ## _reg(4), val); \
+        return; \
+    case 5: \
+        MCR(MAKE_ ## _reg(5), val); \
+        return; \
+    case 6: \
+        MCR(MAKE_ ## _reg(6), val); \
+        return; \
+    case 7: \
+        MCR(MAKE_ ## _reg(7), val); \
+        return; \
+    case 8: \
+        MCR(MAKE_ ## _reg(8), val); \
+        return; \
+    case 9: \
+        MCR(MAKE_ ## _reg(9), val); \
+        return; \
+    case 10: \
+        MCR(MAKE_ ## _reg(10), val); \
+        return; \
+    case 11: \
+        MCR(MAKE_ ## _reg(11), val); \
+        return; \
+    case 12: \
+        MCR(MAKE_ ## _reg(12), val); \
+        return; \
+    case 13: \
+        MCR(MAKE_ ## _reg(13), val); \
+        return; \
+    case 14: \
+        MCR(MAKE_ ## _reg(14), val); \
+        return; \
+    case 15: \
+        MCR(MAKE_ ## _reg(15), val); \
+        return; \
+    default: \
+        assert(bp_num == 0); \
+        MCR(MAKE_ ## _reg(0), val); \
+        return; \
+    } \
+}
+
+#define MAKE_P14(crn, crm, opc2) "p14, 0, %0, c" #crn ", c" #crm ", " #opc2
+#define MAKE_DBGBVR(num) MAKE_P14(0, num, 4)
+#define MAKE_DBGBCR(num) MAKE_P14(0, num, 5)
+#define MAKE_DBGWVR(num) MAKE_P14(0, num, 6)
+#define MAKE_DBGWCR(num) MAKE_P14(0, num, 7)
+#define MAKE_DBGXVR(num) MAKE_P14(1, num, 1)
+
+
+#endif
+#ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
+void Arch_debugAssociateVCPUTCB(tcb_t *t);
+void Arch_debugDissociateVCPUTCB(tcb_t *t);
+#endif
+
+#ifdef ARM_HYP_TRAP_CP14
+/* Those of these that trap NS accesses trap all NS accesses; we can't cause the
+ * processor to only trap NS-PL0 or NS-PL1, but if we want to trap the accesses,
+ * we get both (PL0 and PL1) non-secure modes' accesses.
+ */
+#define ARM_CP15_HDCR "p15, 4, %0, c1, c1, 1"
+#define HDCR_DEBUG_TDRA_SHIFT     (11) /* Trap debug ROM access from non-secure world */
+#define HDCR_DEBUG_TDOSA_SHIFT    (10) /* Trap debug OS related access from NS world */
+#define HDCR_DEBUG_TDA_SHIFT      (9)  /* Trap debug CP14 register access from NS world */
+#define HDCR_DEBUG_TDE_SHIFT      (8)  /* Trap debug exceptions taken from NS world */
+#define HDCR_PERFMON_HPME_SHIFT   (7)  /* Enable the hyp-mode perfmon counters. */
+#define HDCR_PERFMON_TPM_SHIFT    (6)  /* Trap NS PM accesses */
+#define HDCR_PERFMON_TPMCR_SHIFT  (5)  /* Trap NS PMCR reg access */
+
+/** When running seL4 as a hypervisor, if we're building with support for the
+ * hardware debug API, we have a case of indirection that we need to handle.
+ *
+ * For native PL0 user threads in the hypervisor seL4 build, if a debug
+ * exception is triggered in one of them, the CPU will raise the exception and
+ * naturally, it will attempt to deliver it to a PL1 exception vector table --
+ * but no such table exists for native hypervisor-seL4 threads, so the CPU will
+ * end up encountering a VM fault while trying to vector into the vector table.
+ *
+ * For this reason, for native hypervisor-seL4 threads, we need to trap the
+ * debug exception DIRECTLY into the hypervisor-seL4 instance, and handle it
+ * directly. So we need to SET HDCR.TDE for this case.
+ *
+ * For the Guest VM, if it programs the CPU to trigger breakpoints, and a
+ * debug exception gets triggered, we don't want to catch those debug exceptions
+ * since we can let the Guest VM handle them on its own. So we need to UNSET
+ * HDCR.TDE for this case.
+ *
+ * This function encapsulates the setting/unsetting, and it is called when we
+ * are about to enable/disable a VCPU.
+ *
+ * If we are enabling a vcpu (vcpu_enable) we UNSET HDCR.TDE.
+ * If we are disabling a vcpu (vcpu_disable) we SET HDCR.TDE.
+ */
+static inline void setHDCRTrapDebugExceptionState(bool_t enable_trapping)
+{
+    word_t hdcr;
+#ifdef CONFIG_ARCH_AARCH64
+    MRS("mdcr_el2", hdcr);
+#else
+    MRC(ARM_CP15_HDCR, hdcr);
+#endif
+    if (enable_trapping) {
+        /* Trap and redirect debug faults that occur in PL0 native threads by
+         * setting HDCR.TDE (trap debug exceptions).
+         */
+        hdcr |= (BIT(HDCR_DEBUG_TDE_SHIFT)
+                 | BIT(HDCR_DEBUG_TDA_SHIFT)
+                 | BIT(HDCR_DEBUG_TDRA_SHIFT)
+                 | BIT(HDCR_DEBUG_TDOSA_SHIFT));
+    } else {
+        /* Let the PL1 Guest VM handle debug events on its own */
+        hdcr &= ~(BIT(HDCR_DEBUG_TDE_SHIFT)
+                  | BIT(HDCR_DEBUG_TDA_SHIFT)
+                  | BIT(HDCR_DEBUG_TDRA_SHIFT)
+                  | BIT(HDCR_DEBUG_TDOSA_SHIFT));
+    }
+#ifdef CONFIG_ARCH_AARCH64
+    MSR("mdcr_el2", hdcr);
+#else
+    MCR(ARM_CP15_HDCR, hdcr);
+#endif
+}
+
+static inline void initHDCR(void)
+{
+    /* By default at boot, we SET HDCR.TDE to catch and redirect native threads'
+     * PL0 debug exceptions.
+     *
+     * Unfortunately, this is complicated a bit by ARM's strange requirement that
+     * if you set HDCR.TDE, you must also set TDA, TDOSA, and TDRA:
+     *  ARMv7 archref manual: section B1.8.9:
+     *      "When HDCR.TDE is set to 1, the HDCR.{TDRA, TDOSA, TDA} bits must all
+     *      be set to 1, otherwise behavior is UNPREDICTABLE"
+     *
+     * Subsequently on calls to vcpu_enable/disable, we will modify HDCR.TDE
+     * as needed.
+     */
+    setHDCRTrapDebugExceptionState(true);
+}
+#endif /* ARM_HYP_TRAP_CP14 */
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+bool_t byte8WatchpointsSupported(void);
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */

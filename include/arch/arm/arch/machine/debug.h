@@ -6,111 +6,150 @@
 
 #pragma once
 
-#include <util.h>
-#include <api/types.h>
-#include <arch/machine/debug_conf.h>
-#include <sel4/plat/api/constants.h>
-#include <armv/debug.h>
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+#endif
+
+#include <mode/machine/debug.h>
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+enum watchpoint_access /* WCR[4:3] */ {
+  DBGWCR_ACCESS_RESERVED = 0u,
+  DBGWCR_ACCESS_LOAD = 1u,
+  DBGWCR_ACCESS_STORE = 2u,
+  DBGWCR_ACCESS_EITHER = 3u
+};
+
+/* These next few functions (read*Context()/write*Context()) read from TCB
+ * context and not from the hardware registers.
+ */
+static inline word_t readBcrContext(tcb_t *t, uint16_t index) {
+  assert(index < seL4_NumExclusiveBreakpoints);
+  return t->tcbArch.tcbContext.breakpointState.breakpoint[index].cr;
+}
+
+static inline word_t readBvrContext(tcb_t *t, uint16_t index) {
+  assert(index < seL4_NumExclusiveBreakpoints);
+  return t->tcbArch.tcbContext.breakpointState.breakpoint[index].vr;
+}
+
+static inline word_t readWcrContext(tcb_t *t, uint16_t index) {
+  assert(index < seL4_NumExclusiveWatchpoints);
+  return t->tcbArch.tcbContext.breakpointState.watchpoint[index].cr;
+}
+
+static inline word_t readWvrContext(tcb_t *t, uint16_t index) {
+  assert(index < seL4_NumExclusiveWatchpoints);
+  return t->tcbArch.tcbContext.breakpointState.watchpoint[index].vr;
+}
+
+static inline void writeBcrContext(tcb_t *t, uint16_t index, word_t val) {
+  assert(index < seL4_NumExclusiveBreakpoints);
+  t->tcbArch.tcbContext.breakpointState.breakpoint[index].cr = val;
+}
+
+static inline void writeBvrContext(tcb_t *t, uint16_t index, word_t val) {
+  assert(index < seL4_NumExclusiveBreakpoints);
+  t->tcbArch.tcbContext.breakpointState.breakpoint[index].vr = val;
+}
+
+static inline void writeWcrContext(tcb_t *t, uint16_t index, word_t val) {
+  assert(index < seL4_NumExclusiveWatchpoints);
+  t->tcbArch.tcbContext.breakpointState.watchpoint[index].cr = val;
+}
+
+static inline void writeWvrContext(tcb_t *t, uint16_t index, word_t val) {
+  assert(index < seL4_NumExclusiveWatchpoints);
+  t->tcbArch.tcbContext.breakpointState.watchpoint[index].vr = val;
+}
+
+/** These next two functions are part of some state flags.
+ *
+ * A bitfield of all currently enabled breakpoints for a thread is kept in that
+ * thread's TCB. These two functions here set and unset the bits in that
+ * bitfield.
+ */
+static inline void setBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf |= BIT(bp_num);
+    }
+}
+
+static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &= ~BIT(bp_num);
+    }
+}
+
+#endif /* CONFIG_HARDWARE_DEBUG_API */
 
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+
+#define DBGBCR_ENABLE (BIT(0))
+#define DBGWCR_ENABLE (BIT(0))
+
 void restore_user_debug_context(tcb_t *target_thread);
 void saveAllBreakpointState(tcb_t *t);
 void loadAllDisabledBreakpointState(void);
-#endif
+
 #ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
 void Arch_debugAssociateVCPUTCB(tcb_t *t);
 void Arch_debugDissociateVCPUTCB(tcb_t *t);
 #endif
 
-#ifdef ARM_HYP_TRAP_CP14
-/* Those of these that trap NS accesses trap all NS accesses; we can't cause the
- * processor to only trap NS-PL0 or NS-PL1, but if we want to trap the accesses,
- * we get both (PL0 and PL1) non-secure modes' accesses.
- */
-#define ARM_CP15_HDCR "p15, 4, %0, c1, c1, 1"
-#define HDCR_DEBUG_TDRA_SHIFT     (11) /* Trap debug ROM access from non-secure world */
-#define HDCR_DEBUG_TDOSA_SHIFT    (10) /* Trap debug OS related access from NS world */
-#define HDCR_DEBUG_TDA_SHIFT      (9)  /* Trap debug CP14 register access from NS world */
-#define HDCR_DEBUG_TDE_SHIFT      (8)  /* Trap debug exceptions taken from NS world */
-#define HDCR_PERFMON_HPME_SHIFT   (7)  /* Enable the hyp-mode perfmon counters. */
-#define HDCR_PERFMON_TPM_SHIFT    (6)  /* Trap NS PM accesses */
-#define HDCR_PERFMON_TPMCR_SHIFT  (5)  /* Trap NS PMCR reg access */
+DEBUG_GENERATE_READ_FN(readBcrCp, DBGBCR)
+DEBUG_GENERATE_READ_FN(readBvrCp, DBGBVR)
+DEBUG_GENERATE_READ_FN(readWcrCp, DBGWCR)
+DEBUG_GENERATE_READ_FN(readWvrCp, DBGWVR)
+DEBUG_GENERATE_WRITE_FN(writeBcrCp, DBGBCR)
+DEBUG_GENERATE_WRITE_FN(writeBvrCp, DBGBVR)
+DEBUG_GENERATE_WRITE_FN(writeWcrCp, DBGWCR)
+DEBUG_GENERATE_WRITE_FN(writeWvrCp, DBGWVR)
 
-/** When running seL4 as a hypervisor, if we're building with support for the
- * hardware debug API, we have a case of indirection that we need to handle.
+/** For debugging: prints out the debug register pair values as returned by the
+ * coprocessor.
  *
- * For native PL0 user threads in the hypervisor seL4 build, if a debug
- * exception is triggered in one of them, the CPU will raise the exception and
- * naturally, it will attempt to deliver it to a PL1 exception vector table --
- * but no such table exists for native hypervisor-seL4 threads, so the CPU will
- * end up encountering a VM fault while trying to vector into the vector table.
- *
- * For this reason, for native hypervisor-seL4 threads, we need to trap the
- * debug exception DIRECTLY into the hypervisor-seL4 instance, and handle it
- * directly. So we need to SET HDCR.TDE for this case.
- *
- * For the Guest VM, if it programs the CPU to trigger breakpoints, and a
- * debug exception gets triggered, we don't want to catch those debug exceptions
- * since we can let the Guest VM handle them on its own. So we need to UNSET
- * HDCR.TDE for this case.
- *
- * This function encapsulates the setting/unsetting, and it is called when we
- * are about to enable/disable a VCPU.
- *
- * If we are enabling a vcpu (vcpu_enable) we UNSET HDCR.TDE.
- * If we are disabling a vcpu (vcpu_disable) we SET HDCR.TDE.
+ * @param nBp Number of breakpoint reg pairs to print, starting at BP #0.
+ * @param nBp Number of watchpoint reg pairs to print, starting at WP #0.
  */
-static inline void setHDCRTrapDebugExceptionState(bool_t enable_trapping)
-{
-    word_t hdcr;
-#ifdef CONFIG_ARCH_AARCH64
-    MRS("mdcr_el2", hdcr);
-#else
-    MRC(ARM_CP15_HDCR, hdcr);
-#endif
-    if (enable_trapping) {
-        /* Trap and redirect debug faults that occur in PL0 native threads by
-         * setting HDCR.TDE (trap debug exceptions).
-         */
-        hdcr |= (BIT(HDCR_DEBUG_TDE_SHIFT)
-                 | BIT(HDCR_DEBUG_TDA_SHIFT)
-                 | BIT(HDCR_DEBUG_TDRA_SHIFT)
-                 | BIT(HDCR_DEBUG_TDOSA_SHIFT));
-    } else {
-        /* Let the PL1 Guest VM handle debug events on its own */
-        hdcr &= ~(BIT(HDCR_DEBUG_TDE_SHIFT)
-                  | BIT(HDCR_DEBUG_TDA_SHIFT)
-                  | BIT(HDCR_DEBUG_TDRA_SHIFT)
-                  | BIT(HDCR_DEBUG_TDOSA_SHIFT));
-    }
-#ifdef CONFIG_ARCH_AARCH64
-    MSR("mdcr_el2", hdcr);
-#else
-    MCR(ARM_CP15_HDCR, hdcr);
-#endif
+UNUSED static inline void dumpBpsAndWpsCp(int nBp, int nWp) {
+  int i;
+
+  for (i = 0; i < nBp; i++) {
+    userError("CP BP %d: Bcr %lx, Bvr %lx", i, readBcrCp(i), readBvrCp(i));
+  }
+
+  for (i = 0; i < nWp; i++) {
+    userError("CP WP %d: Wcr %lx, Wvr %lx", i, readWcrCp(i), readWvrCp(i));
+  }
 }
 
-static inline void initHDCR(void)
-{
-    /* By default at boot, we SET HDCR.TDE to catch and redirect native threads'
-     * PL0 debug exceptions.
-     *
-     * Unfortunately, this is complicated a bit by ARM's strange requirement that
-     * if you set HDCR.TDE, you must also set TDA, TDOSA, and TDRA:
-     *  ARMv7 archref manual: section B1.8.9:
-     *      "When HDCR.TDE is set to 1, the HDCR.{TDRA, TDOSA, TDA} bits must all
-     *      be set to 1, otherwise behavior is UNPREDICTABLE"
-     *
-     * Subsequently on calls to vcpu_enable/disable, we will modify HDCR.TDE
-     * as needed.
-     */
-    setHDCRTrapDebugExceptionState(true);
+/** Print a thread's saved debug context. For debugging. This differs from
+ * dumpBpsAndWpsCp in that it reads from a thread's saved register context, and
+ * not from the hardware coprocessor registers.
+ *
+ * @param at arch_tcb_t where the thread's reg context is stored.
+ * @param nBp Number of BP regs to print, beginning at BP #0.
+ * @param mWp Number of WP regs to print, beginning at WP #0.
+ */
+UNUSED static void dumpBpsAndWpsContext(tcb_t *t, int nBp, int nWp) {
+  int i;
+
+  for (i = 0; i < nBp; i++) {
+    userError("Ctxt BP %d: Bcr %lx, Bvr %lx", i, readBcrContext(t, i),
+              readBvrContext(t, i));
+  }
+
+  for (i = 0; i < nWp; i++) {
+    userError("Ctxt WP %d: Wcr %lx, Wvr %lx", i, readWcrContext(t, i),
+              readWvrContext(t, i));
+  }
 }
-#endif /* ARM_HYP_TRAP_CP14 */
 
-#ifdef CONFIG_HARDWARE_DEBUG_API
-
-static uint16_t convertBpNumToArch(uint16_t bp_num)
+static inline uint16_t convertBpNumToArch(uint16_t bp_num)
 {
     if (bp_num >= seL4_NumExclusiveBreakpoints) {
         bp_num -= seL4_NumExclusiveBreakpoints;
@@ -118,108 +157,11 @@ static uint16_t convertBpNumToArch(uint16_t bp_num)
     return bp_num;
 }
 
-static word_t getTypeFromBpNum(uint16_t bp_num)
+static inline word_t getTypeFromBpNum(uint16_t bp_num)
 {
     return (bp_num >= seL4_NumExclusiveBreakpoints)
            ? seL4_DataBreakpoint
            : seL4_InstructionBreakpoint;
-}
-
-static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
-                                                                 uint16_t bp_num,
-                                                                 word_t n_instr,
-                                                                 bool_t is_reply)
-{
-    word_t type;
-    syscall_error_t ret = {
-        .type = seL4_NoError
-    };
-
-    if (is_reply) {
-        /* If this is a single-step fault reply, just default to the already-
-         * configured bp_num. Of course, this assumes that a register had
-         * already previously been configured for single-stepping.
-         */
-        if (!t->tcbArch.tcbContext.breakpointState.single_step_enabled) {
-            userError("Debug: Single-step reply when single-stepping not "
-                      "enabled.");
-            ret.type = seL4_IllegalOperation;
-            return ret;
-        }
-
-        type = seL4_InstructionBreakpoint;
-        bp_num = t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num;
-    } else {
-        type = getTypeFromBpNum(bp_num);
-        bp_num = convertBpNumToArch(bp_num);
-    }
-
-    if (type != seL4_InstructionBreakpoint || bp_num >= seL4_FirstWatchpoint) {
-        /* Must use an instruction BP register */
-        userError("Debug: Single-stepping can only be used with an instruction "
-                  "breakpoint.");
-        ret.type = seL4_InvalidArgument;
-        ret.invalidArgumentNumber = 0;
-        return ret;
-    }
-    if (t->tcbArch.tcbContext.breakpointState.single_step_enabled == true) {
-        if (bp_num != t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num) {
-            /* Can't configure more than one register for stepping. */
-            userError("Debug: Only one register can be configured for "
-                      "single-stepping at a time.");
-            ret.type = seL4_InvalidArgument;
-            ret.invalidArgumentNumber = 0;
-            return ret;
-        }
-    }
-
-    return ret;
-}
-
-bool_t byte8WatchpointsSupported(void);
-
-static inline syscall_error_t Arch_decodeSetBreakpoint(tcb_t *t,
-                                                       uint16_t bp_num, word_t vaddr, word_t type,
-                                                       word_t size, word_t rw)
-{
-    syscall_error_t ret = {
-        .type = seL4_NoError
-    };
-
-    bp_num = convertBpNumToArch(bp_num);
-
-    if (type == seL4_DataBreakpoint) {
-        if (bp_num >= seL4_NumExclusiveWatchpoints) {
-            userError("Debug: invalid data-watchpoint number %u.", bp_num);
-            ret.type = seL4_RangeError;
-            ret.rangeErrorMin = 0;
-            ret.rangeErrorMax = seL4_NumExclusiveBreakpoints - 1;
-            return ret;
-        }
-    } else if (type == seL4_InstructionBreakpoint) {
-        if (bp_num >= seL4_NumExclusiveBreakpoints) {
-            userError("Debug: invalid instruction breakpoint nunber %u.", bp_num);
-            ret.type = seL4_RangeError;
-            ret.rangeErrorMin = 0;
-            ret.rangeErrorMax = seL4_NumExclusiveWatchpoints - 1;
-            return ret;
-        }
-    }
-
-    if (size == 8 && !byte8WatchpointsSupported()) {
-        userError("Debug: 8-byte watchpoints not supported on this CPU.");
-        ret.type = seL4_InvalidArgument;
-        ret.invalidArgumentNumber = 3;
-        return ret;
-    }
-    if (size == 8 && type != seL4_DataBreakpoint) {
-        userError("Debug: 8-byte sizes can only be used with watchpoints.");
-        ret.type = seL4_InvalidArgument;
-        ret.invalidArgumentNumber = 3;
-        return ret;
-    }
-
-    return ret;
 }
 
 static inline syscall_error_t Arch_decodeGetBreakpoint(tcb_t *t, uint16_t bp_num)
@@ -248,24 +190,132 @@ static inline syscall_error_t Arch_decodeUnsetBreakpoint(tcb_t *t, uint16_t bp_n
         return ret;
     }
 
-    word_t type;
-    dbg_bcr_t bcr;
-
-    type = getTypeFromBpNum(bp_num);
-    bp_num = convertBpNumToArch(bp_num);
-
-    bcr.words[0] = t->tcbArch.tcbContext.breakpointState.breakpoint[bp_num].cr;
-    if (type == seL4_InstructionBreakpoint) {
-        if (Arch_breakpointIsMismatch(bcr) == true && dbg_bcr_get_enabled(bcr)) {
-            userError("Rejecting call to unsetBreakpoint on breakpoint configured "
-                      "for single-stepping (hwid %u).", bp_num);
-            ret.type = seL4_IllegalOperation;
-            return ret;
-        }
-    }
-
     return ret;
 }
 
+syscall_error_t Arch_decodeSetBreakpoint(tcb_t *t,
+                                         uint16_t bp_num, word_t vaddr, word_t type,
+                                         word_t size, word_t rw);
+syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
+                                                   uint16_t bp_num,
+                                                   word_t n_instr,
+                                                   bool_t is_reply);
+
+#endif /* ARM_BASE_CP14_SAVE_AND_RESTORE */
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+
+
+
+/** Convert an arch specific encoded watchpoint size back into a simple integer
+ * representation.
+ */
+static inline word_t convertArchToSize(word_t archsize) {
+  switch (archsize) {
+  case 0x1:
+    return 1;
+  case 0x3:
+    return 2;
+  case 0xFF:
+    return 8;
+  default:
+    assert(archsize == 0xF);
+    return 4;
+  }
+}
+
+/** Convert an access perms API value (seL4_BreakOnRead, etc) into the register
+ * encoding that matches it.
+ */
+static inline word_t convertAccessToArch(word_t access) {
+  switch (access) {
+  case seL4_BreakOnRead:
+    return DBGWCR_ACCESS_LOAD;
+  case seL4_BreakOnWrite:
+    return DBGWCR_ACCESS_STORE;
+  default:
+    assert(access == seL4_BreakOnReadWrite);
+    return DBGWCR_ACCESS_EITHER;
+  }
+}
+
+/** Convert an arch-specific register encoding back into an API access perms
+ * value.
+ */
+static inline word_t convertArchToAccess(word_t archaccess) {
+  switch (archaccess) {
+  case DBGWCR_ACCESS_LOAD:
+    return seL4_BreakOnRead;
+  case DBGWCR_ACCESS_STORE:
+    return seL4_BreakOnWrite;
+  default:
+    assert(archaccess == DBGWCR_ACCESS_EITHER);
+    return seL4_BreakOnReadWrite;
+  }
+}
+
+static inline uint16_t getBpNumFromType(uint16_t bp_num, word_t type) {
+  assert(type == seL4_InstructionBreakpoint || type == seL4_DataBreakpoint ||
+         type == seL4_SingleStep);
+
+  switch (type) {
+  case seL4_InstructionBreakpoint:
+  case seL4_SingleStep:
+    return bp_num;
+  default: /* seL4_DataBreakpoint: */
+    assert(type == seL4_DataBreakpoint);
+    return bp_num + seL4_NumExclusiveBreakpoints;
+  }
+}
+
+/** Load an initial, all-disabled setup state for the registers.
+ */
+BOOT_CODE static void disableAllBpsAndWps(void) {
+  int i;
+
+  for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+    writeBvrCp(i, 0);
+    writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+  }
+  for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+    writeWvrCp(i, 0);
+    writeWcrCp(i, readWcrCp(i) & ~DBGWCR_ENABLE);
+  }
+
+  isb();
+}
 #endif /* CONFIG_HARDWARE_DEBUG_API */
 
+#ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
+
+
+
+static void loadBreakpointState(tcb_t *t) {
+  int i;
+
+  assert(t != NULL);
+
+  for (i = 0; i < seL4_NumExclusiveBreakpoints; i++) {
+    if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf & BIT(i)) {
+      writeBvrCp(i, readBvrContext(t, i));
+      writeBcrCp(i, readBcrContext(t, i));
+    } else {
+      /* If the thread isn't using the BP, then just load
+       * a default "disabled" state.
+       */
+      writeBcrCp(i, readBcrCp(i) & ~DBGBCR_ENABLE);
+    }
+  }
+
+  for (i = 0; i < seL4_NumExclusiveWatchpoints; i++) {
+    if (t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &
+        BIT(i + seL4_NumExclusiveBreakpoints)) {
+      writeWvrCp(i, readWvrContext(t, i));
+      writeWcrCp(i, readWcrContext(t, i));
+    } else {
+      writeWcrCp(i, readWcrCp(i) & ~DBGWCR_ENABLE);
+    }
+  }
+}
+
+#endif

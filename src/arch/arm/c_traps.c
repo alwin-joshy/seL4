@@ -15,6 +15,7 @@
 #include <benchmark/benchmark_track.h>
 #include <benchmark/benchmark_utilisation.h>
 #include <arch/machine.h>
+#include <mode/machine/debug.h>
 
 void VISIBLE NORETURN c_handle_undefined_instruction(void)
 {
@@ -45,6 +46,14 @@ void VISIBLE NORETURN c_handle_undefined_instruction(void)
 #ifdef CONFIG_ARCH_AARCH32
     handleUserLevelFault(0, 0);
 #else
+#ifdef CONFIG_HARDWARE_DEBUG_API
+    word_t esr = getESR();
+    if (isDebugFault(esr)) {
+        handleDebugFaultEvent(esr);
+        restore_user_context();
+        UNREACHABLE();
+    }
+#endif
     handleUserLevelFault(getESR(), 0);
 #endif
     restore_user_context();

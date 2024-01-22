@@ -24,6 +24,9 @@
 #include <string.h>
 #include <kernel/traps.h>
 #include <arch/machine.h>
+#ifdef CONFIG_HARDWARE_DEBUG_API
+#include <mode/machine/debug.h>
+#endif /* CONFIG_HARDWARE_DEBUG_API */
 #ifdef ENABLE_SMP_SUPPORT
 #include <smp/ipi.h>
 #endif
@@ -238,6 +241,22 @@ exception_t handleUserLevelFault(word_t w_a, word_t w_b)
 
     return EXCEPTION_NONE;
 }
+
+#if defined(CONFIG_ARCH_AARCH64) && defined(CONFIG_HARDWARE_DEBUG_API)
+exception_t handleDebugFaultEvent(word_t esr)
+{
+    MCS_DO_IF_BUDGET({
+        current_fault = handleUserLevelDebugException(esr, getRestartPC(NODE_STATE(ksCurThread)));
+        if (seL4_Fault_get_seL4_FaultType(current_fault) != seL4_Fault_NullFault) {
+            handleFault(NODE_STATE(ksCurThread));
+        }
+    })
+    schedule();
+    activateThread();
+
+    return EXCEPTION_NONE;
+}
+#endif
 
 exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType)
 {
