@@ -1422,7 +1422,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                                 seL4_MessageInfo_new(0, 0, 0, length)));
                 return EXCEPTION_NONE;
             } else {
-                current_syscall_error.type = ret.status;
+                current_syscall_error.type = seL4_FailedLookup;
             }
         } else {
             writeWordToVSpace_ret_t ret = writeWordtoVSpace(vspaceRoot, asid, vaddr, value);
@@ -1432,8 +1432,8 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, unsigned int l
                                 seL4_MessageInfo_new(0, 0, 0, 0)));
                 return EXCEPTION_NONE;
             } else {
-                current_syscall_error.type = ret.status;
-            }
+                current_syscall_error.type = seL4_FailedLookup;
+           }
         }
 
         return EXCEPTION_SYSCALL_ERROR;
