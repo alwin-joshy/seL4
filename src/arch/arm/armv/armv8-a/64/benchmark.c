@@ -9,7 +9,6 @@
 #ifdef CONFIG_ENABLE_BENCHMARKS
 #ifdef CONFIG_PROFILER_ENABLE
 void armv_handleOverflowIRQ(void) {
-    printf("In the arm 8 handle overflow irq\n");
     // Halt the PMU
     uint32_t mask = 0;
 
@@ -31,31 +30,33 @@ void armv_handleOverflowIRQ(void) {
     }
     
     #ifdef CONFIG_KERNEL_LOG_BUFFER
-    
-    // Get the pmu sample structure in the log
-    pmu_sample_t *profLog = (pmu_sample_t *) KS_LOG_PPTR;
 
-    // Check that this TCB has been marked to track
-    if (NODE_STATE(ksCurThread)->tcbProfileId != 1) {
-        profLog->valid = 0;
+      // Checking the log buffer exists, and is valid
+    if (ksUserLogBuffer == 0) {
+        userError("A user-level buffer has to be set before starting profiling.\
+                Use seL4_BenchmarkSetLogBuffer\n");
+        setRegister(NODE_STATE(ksCurThread), capRegister, seL4_IllegalOperation);
         return;
-    }
+    } 
 
-    // Get the PC 
-    uint64_t pc = getRegister(NODE_STATE(ksCurThread), FaultIP);
+    // Get the pmu sample structure in the log
+    pmu_sample_t *profLogs = (pmu_sample_t *) KS_LOG_PPTR;
+
     // Save the interrupt flags
     uint32_t irq_f = 0;
     MRS(PMOVSR, irq_f);
     uint32_t val = BIT(CCNT_INDEX);
     MSR(PMOVSR, val);
+    profLogs[0].irqFlag = irq_f;
 
-    // Checking the log buffer exists, and is valid
-    if (ksUserLogBuffer == 0) {
-        userError("A user-level buffer has to be set before starting profiling.\
-                Use seL4_BenchmarkSetLogBuffer\n");
-        setRegister(NODE_STATE(ksCurThread), capRegister, seL4_IllegalOperation);
-        // return EXCEPTION_SYSCALL_ERROR;
+    // Check that this TCB has been marked to track
+    if (NODE_STATE(ksCurThread)->tcbProfileId != 1) {
+        profLogs[0].valid = 0;
+        return;
     }
+
+    // Get the PC 
+    uint64_t pc = getRegister(NODE_STATE(ksCurThread), FaultIP);
 
 
     // Unwinding the call stack, currently only supporting 4 prev calls (arbitrary size)
@@ -80,7 +81,7 @@ void armv_handleOverflowIRQ(void) {
         if (read_fp.status == EXCEPTION_NONE && read_lr.status == EXCEPTION_NONE) {
             // Set the fp value to the next frame entry
             fp = read_fp.value;
-            profLog->ips[i] = read_lr.value;
+            profLogs[0].ips[i] = read_lr.value;
             // If the fp is 0, then we have reached the end of the frame stack chain
             if (fp == 0) {
                 break;
@@ -93,20 +94,19 @@ void armv_handleOverflowIRQ(void) {
         }        
     }     
     // Add the data to the profiler log buffer
-    profLog->valid = 1;
-    profLog->ip = pc;
+    profLogs[0].valid = 1;
+    profLogs[0].ip = pc;
     // Populate PID with whatever we registered inside the TCB
-    profLog->pid = 1;
-    profLog->time = getCurrentTime();
+    profLogs[0].pid = 1;
+    profLogs[0].time = getCurrentTime();
     #ifdef ENABLE_SMP_SUPPORT
-    profLog->cpu = NODE_STATE(ksCurThread)->tcbAffinity;
+    profLogs[0].cpu = NODE_STATE(ksCurThread)->tcbAffinity;
     #else
-    profLog->cpu = 0;
+    profLogs[0].cpu = 0;
     #endif
     // The period is only known by the profiler.
-    profLog->period = 0;
-    profLog->irqFlag = irq_f;
-    #endif
+    profLogs[0].period = 0;
+     #endif
  
 }
 #endif

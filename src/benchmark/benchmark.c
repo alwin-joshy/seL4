@@ -31,6 +31,7 @@ exception_t handle_SysBenchmarkFlushCaches(void)
 
 exception_t handle_SysBenchmarkResetLog(void)
 {
+#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES   
 #ifdef CONFIG_KERNEL_LOG_BUFFER
     if (ksUserLogBuffer == 0) {
         userError("A user-level buffer has to be set before resetting benchmark.\
@@ -41,6 +42,7 @@ exception_t handle_SysBenchmarkResetLog(void)
 
     ksLogIndex = 0;
 #endif /* CONFIG_KERNEL_LOG_BUFFER */
+#endif /* CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES*/
 
 #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
     NODE_STATE(benchmark_log_utilisation_enabled) = true;
@@ -60,10 +62,12 @@ exception_t handle_SysBenchmarkResetLog(void)
 
 exception_t handle_SysBenchmarkFinalizeLog(void)
 {
+#ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
 #ifdef CONFIG_KERNEL_LOG_BUFFER
     ksLogIndexFinalized = ksLogIndex;
     setRegister(NODE_STATE(ksCurThread), capRegister, ksLogIndexFinalized);
 #endif /* CONFIG_KERNEL_LOG_BUFFER */
+#endif /* CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES*/
 
 #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
     benchmark_utilisation_finalise();
