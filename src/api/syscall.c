@@ -209,7 +209,6 @@ exception_t handleUnknownSyscall(word_t w)
 
 #ifdef CONFIG_PROFILER_ENABLE
     if (w == SysProfilerRegisterThread) {
-        printf("We got to the syscall handling stub!\n");
         return handle_SysProfilerRegisterThread();
     }
 #endif /* CONFIG_PROFILER_ENABLE */
