@@ -15,6 +15,7 @@
 #include <kernel/stack.h>
 #include <machine/io.h>
 #include <machine/debug.h>
+#include <mode/machine/debug.h>
 #include <model/statedata.h>
 #include <object/cnode.h>
 #include <object/untyped.h>
