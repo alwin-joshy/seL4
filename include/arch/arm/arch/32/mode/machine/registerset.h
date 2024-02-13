@@ -187,11 +187,11 @@ typedef struct debug_register_pair {
  * the size of the untyped needed for a TCB when watchpoint handling is
  * involved.
  */
-#define EXLUSIVE_WATCHPOINT_PADING 6
+#define EXLUSIVE_WATCHPOINT_PADDING 6
 #define EXLUSIVE_WATCHPOINT_PADDED \
-    (seL4_NumExclusiveWatchpoints > EXLUSIVE_WATCHPOINT_PADING) \
+    (seL4_NumExclusiveWatchpoints > EXLUSIVE_WATCHPOINT_PADDING) \
         ? seL4_NumExclusiveWatchpoints \
-        : EXLUSIVE_WATCHPOINT_PADING
+        : EXLUSIVE_WATCHPOINT_PADDING
 
 typedef struct user_breakpoint_state {
     /* We don't use context comparisons. */

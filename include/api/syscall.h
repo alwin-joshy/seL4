@@ -34,6 +34,9 @@ exception_t handleInterruptEntry(void);
 exception_t handleUnknownSyscall(word_t w);
 exception_t handleUserLevelFault(word_t w_a, word_t w_b);
 exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType);
+#ifdef CONFIG_ARCH_AARCH64
+exception_t handleDebugFaultEvent(word_t esr);
+#endif
 
 static inline word_t PURE getSyscallArg(word_t i, word_t *ipc_buffer)
 {

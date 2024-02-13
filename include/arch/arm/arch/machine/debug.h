@@ -11,18 +11,140 @@
 #include <arch/machine/debug_conf.h>
 #include <sel4/plat/api/constants.h>
 #include <armv/debug.h>
+#include <mode/machine/debug.h>
 
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
 void restore_user_debug_context(tcb_t *target_thread);
 void saveAllBreakpointState(tcb_t *t);
 void loadAllDisabledBreakpointState(void);
+
+DEBUG_GENERATE_READ_FN(readBcrCp, DBGBCR)
+DEBUG_GENERATE_READ_FN(readBvrCp, DBGBVR)
+DEBUG_GENERATE_READ_FN(readWcrCp, DBGWCR)
+DEBUG_GENERATE_READ_FN(readWvrCp, DBGWVR)
+DEBUG_GENERATE_WRITE_FN(writeBcrCp, DBGBCR)
+DEBUG_GENERATE_WRITE_FN(writeBvrCp, DBGBVR)
+DEBUG_GENERATE_WRITE_FN(writeWcrCp, DBGWCR)
+DEBUG_GENERATE_WRITE_FN(writeWvrCp, DBGWVR)
+
+#define DBGBCR_ENABLE                 (BIT(0))
+#define DBGWCR_ENABLE                 (BIT(0))
 #endif
+
 #ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
 void Arch_debugAssociateVCPUTCB(tcb_t *t);
 void Arch_debugDissociateVCPUTCB(tcb_t *t);
 #endif
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
+
+/* ARMv7 Manuals, c3.3.1:
+ *  "Breakpoint debug events are synchronous. That is, the debug event acts
+ *  like an exception that cancels the breakpointed instruction."
+ *
+ * ARMv7 Manuals, c3.4.1:
+ *  "Watchpoint debug events are precise and can be synchronous or asynchronous:
+ *  a synchronous Watchpoint debug event acts like a synchronous abort
+ *  exception on the memory access instruction itself. An asynchronous
+ *  Watchpoint debug event acts like a precise asynchronous abort exception that
+ *  cancels a later instruction."
+ */
+
+enum breakpoint_privilege /* BCR[2:1] */ {
+    DBGBCR_PRIV_RESERVED = 0u,
+    DBGBCR_PRIV_PRIVILEGED = 1u,
+    DBGBCR_PRIV_USER = 2u,
+    /* Use either when doing context linking, because the linked WVR or BVR that
+     * specifies the vaddr, overrides the context-programmed BCR privilege.
+     */
+    DBGBCR_BCR_PRIV_EITHER = 3u
+};
+
+enum watchpoint_privilege /* WCR[2:1] */ {
+    DBGWCR_PRIV_RESERVED = 0u,
+    DBGWCR_PRIV_PRIVILEGED = 1u,
+    DBGWCR_PRIV_USER = 2u,
+    DBGWCR_PRIV_EITHER = 3u
+};
+
+enum watchpoint_access /* WCR[4:3] */ {
+    DBGWCR_ACCESS_RESERVED = 0u,
+    DBGWCR_ACCESS_LOAD = 1u,
+    DBGWCR_ACCESS_STORE = 2u,
+    DBGWCR_ACCESS_EITHER = 3u
+};
+
+/* These next few functions (read*Context()/write*Context()) read from TCB
+ * context and not from the hardware registers.
+ */
+static word_t
+readBcrContext(tcb_t *t, uint16_t index)
+{
+    assert(index < seL4_NumExclusiveBreakpoints);
+    return t->tcbArch.tcbContext.breakpointState.breakpoint[index].cr;
+}
+
+static word_t readBvrContext(tcb_t *t, uint16_t index)
+{
+    assert(index < seL4_NumExclusiveBreakpoints);
+    return t->tcbArch.tcbContext.breakpointState.breakpoint[index].vr;
+}
+
+static word_t readWcrContext(tcb_t *t, uint16_t index)
+{
+    assert(index < seL4_NumExclusiveWatchpoints);
+    return t->tcbArch.tcbContext.breakpointState.watchpoint[index].cr;
+}
+
+static word_t readWvrContext(tcb_t *t, uint16_t index)
+{
+    assert(index < seL4_NumExclusiveWatchpoints);
+    return t->tcbArch.tcbContext.breakpointState.watchpoint[index].vr;
+}
+
+static void writeBcrContext(tcb_t *t, uint16_t index, word_t val)
+{
+    assert(index < seL4_NumExclusiveBreakpoints);
+    t->tcbArch.tcbContext.breakpointState.breakpoint[index].cr = val;
+}
+
+static void writeBvrContext(tcb_t *t, uint16_t index, word_t val)
+{
+    assert(index < seL4_NumExclusiveBreakpoints);
+    t->tcbArch.tcbContext.breakpointState.breakpoint[index].vr = val;
+}
+
+static void writeWcrContext(tcb_t *t, uint16_t index, word_t val)
+{
+    assert(index < seL4_NumExclusiveWatchpoints);
+    t->tcbArch.tcbContext.breakpointState.watchpoint[index].cr = val;
+}
+
+static void writeWvrContext(tcb_t *t, uint16_t index, word_t val)
+{
+    assert(index < seL4_NumExclusiveWatchpoints);
+    t->tcbArch.tcbContext.breakpointState.watchpoint[index].vr = val;
+}
+
+/** These next two functions are part of some state flags.
+ *
+ * A bitfield of all currently enabled breakpoints for a thread is kept in that
+ * thread's TCB. These two functions here set and unset the bits in that
+ * bitfield.
+ */
+static inline void setBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf |= BIT(bp_num);
+    }
+}
+
+static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &= ~BIT(bp_num);
+    }
+}
 
 static uint16_t convertBpNumToArch(uint16_t bp_num)
 {
@@ -63,7 +185,9 @@ static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
 
         type = seL4_InstructionBreakpoint;
         bp_num = t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num;
-    } else {
+    }
+#ifdef CONFIG_ARCH_AARCH32
+    else {
         type = getTypeFromBpNum(bp_num);
         bp_num = convertBpNumToArch(bp_num);
     }
@@ -86,11 +210,11 @@ static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
             return ret;
         }
     }
+#endif /* CONFIG_ARCH_AARCH32 */
 
     return ret;
 }
 
-bool_t byte8WatchpointsSupported(void);
 
 static inline syscall_error_t Arch_decodeSetBreakpoint(tcb_t *t,
                                                        uint16_t bp_num, word_t vaddr, word_t type,
@@ -182,4 +306,3 @@ static inline syscall_error_t Arch_decodeUnsetBreakpoint(tcb_t *t, uint16_t bp_n
 }
 
 #endif /* CONFIG_HARDWARE_DEBUG_API */
-
