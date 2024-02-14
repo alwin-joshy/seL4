@@ -311,9 +311,9 @@ void tcbReleaseEnqueue(tcb_t *tcb)
 {
     assert(thread_state_get_tcbInReleaseQueue(tcb->tcbState) == false);
     assert(thread_state_get_tcbQueued(tcb->tcbState) == false);
-
-    ticks_t new_time;
-    tcb_queue_t queue;
+    
+    tcb_t *before = NULL;
+    tcb_t *after = NODE_STATE_ON_CORE(ksReleaseHead, tcb->tcbAffinity);
 
     new_time = tcbReadyTime(tcb);
     queue = NODE_STATE_ON_CORE(ksReleaseQueue, tcb->tcbAffinity);

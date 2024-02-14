@@ -19,16 +19,12 @@
 static inline void armv_enableOverflowIRQ(void)
 {
     uint32_t val;
-    MRS(PMINTENSET, val);
+    MRS("PMINTENSET_EL1", val);
     val |= BIT(CCNT_INDEX);
-    MSR(PMINTENSET, val);
+    MSR("PMINTENSET_EL1", val);
 }
 
-static inline void armv_handleOverflowIRQ(void)
-{
-    uint32_t val = BIT(CCNT_INDEX);
-    MSR(PMOVSR, val);
-}
+static inline void armv_handleOverflowIRQ(void);
 
 #endif /* CONFIG_ENABLE_BENCHMARKS */
 
