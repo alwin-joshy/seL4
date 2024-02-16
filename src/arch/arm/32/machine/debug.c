@@ -120,6 +120,61 @@ bool_t byte8WatchpointsSupported(void)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
+/** Initiates or halts single-stepping on the target process.
+ *
+ * @param at arch_tcb_t for the target process to be configured.
+ * @param bp_num The hardware ID of the breakpoint register to be used.
+ * @param n_instr The number of instructions to step over.
+ */
+bool_t configureSingleStepping(tcb_t *t,
+                               uint16_t bp_num,
+                               word_t n_instr,
+                               bool_t is_reply)
+{
+
+    if (is_reply) {
+        bp_num = t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num;
+    } else {
+        bp_num = convertBpNumToArch(bp_num);
+    }
+
+    /* On ARM single-stepping is emulated using breakpoint mismatches. The aim
+     * of single stepping is to execute a single instruction. By setting an
+     * instruction mismatch breakpoint to the current LR of the target thread,
+     * the thread will be able to execute this instruction, but attempting to
+     * execute any other instruction will result in the generation of a debug
+     * exception that will be delivered to the kernel, allowing us to simulate
+     * single stepping.
+     */
+    dbg_bcr_t bcr;
+
+    bcr.words[0] = readBcrContext(t, bp_num);
+
+    /* If the user calls us with n_instr == 0, allow them to configure, but
+     * leave it disabled.
+     */
+    if (n_instr > 0) {
+        bcr = dbg_bcr_set_enabled(bcr, 1);
+        t->tcbArch.tcbContext.breakpointState.single_step_enabled = true;
+    } else {
+        bcr = dbg_bcr_set_enabled(bcr, 0);
+        t->tcbArch.tcbContext.breakpointState.single_step_enabled = false;
+    }
+
+    bcr = dbg_bcr_set_linkedBrp(bcr, 0);
+    bcr = dbg_bcr_set_supervisorAccess(bcr, DBGBCR_PRIV_USER);
+    bcr = dbg_bcr_set_byteAddressSelect(bcr, convertSizeToArch(1));
+    bcr = Arch_setupBcr(bcr, false);
+
+    writeBvrContext(t, bp_num, t->tcbArch.tcbContext.registers[FaultIP]);
+    writeBcrContext(t, bp_num, bcr.words[0]);
+
+    t->tcbArch.tcbContext.breakpointState.n_instructions = n_instr;
+    t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num = bp_num;
+    return true;
+}
+
+
 /** Extracts the "Method of Entry" bits from DBGDSCR.
  *
  * Used to determine what type of debug exception has occurred.
