@@ -10,13 +10,34 @@
 #include <api/types.h>
 #include <arch/machine/debug_conf.h>
 #include <sel4/plat/api/constants.h>
-#include <armv/debug.h>
+#include <mode/machine/debug.h>
 
 #ifdef ARM_BASE_CP14_SAVE_AND_RESTORE
 void restore_user_debug_context(tcb_t *target_thread);
 void saveAllBreakpointState(tcb_t *t);
 void loadAllDisabledBreakpointState(void);
+
+#define DBGBCR_ENABLE                 (BIT(0))
+#define DBGWCR_ENABLE                 (BIT(0))
+
+DEBUG_GENERATE_READ_FN(readBcrCp, DBGBCR)
+DEBUG_GENERATE_READ_FN(readBvrCp, DBGBVR)
+DEBUG_GENERATE_READ_FN(readWcrCp, DBGWCR)
+DEBUG_GENERATE_READ_FN(readWvrCp, DBGWVR)
+DEBUG_GENERATE_WRITE_FN(writeBcrCp, DBGBCR)
+DEBUG_GENERATE_WRITE_FN(writeBvrCp, DBGBVR)
+DEBUG_GENERATE_WRITE_FN(writeWcrCp, DBGWCR)
+DEBUG_GENERATE_WRITE_FN(writeWvrCp, DBGWVR)
+
+void writeBvrContext(tcb_t *t, uint16_t index, word_t val);
 #endif
+
+#ifdef CONFIG_HARDWARE_DEBUG_API
+int getAndResetActiveBreakpoint(word_t vaddr, word_t reason);
+BOOT_CODE void disableAllBpsAndWps(void);
+uint16_t getBpNumFromType(uint16_t bp_num, word_t type);
+#endif /* CONFIG_HARDWARE_DEBUG_API */
+
 #ifdef ARM_HYP_CP14_SAVE_AND_RESTORE_VCPU_THREADS
 void Arch_debugAssociateVCPUTCB(tcb_t *t);
 void Arch_debugDissociateVCPUTCB(tcb_t *t);
@@ -76,12 +97,22 @@ static inline void setHDCRTrapDebugExceptionState(bool_t enable_trapping)
                  | BIT(HDCR_DEBUG_TDA_SHIFT)
                  | BIT(HDCR_DEBUG_TDRA_SHIFT)
                  | BIT(HDCR_DEBUG_TDOSA_SHIFT));
+#ifdef CONFIG_ARCH_AARCH64
+        // @alwin: I think only this is necessary on aarch64 actually
+        // hcr |= (HCR_TGE);
+#endif
+
     } else {
         /* Let the PL1 Guest VM handle debug events on its own */
         hdcr &= ~(BIT(HDCR_DEBUG_TDE_SHIFT)
                   | BIT(HDCR_DEBUG_TDA_SHIFT)
                   | BIT(HDCR_DEBUG_TDRA_SHIFT)
                   | BIT(HDCR_DEBUG_TDOSA_SHIFT));
+#ifdef CONFIG_ARCH_AARCH64
+        // @alwin: I think only this is necessary on aarch64 actually
+        // hcr |= (HCR_TGE);
+#endif
+
     }
 #ifdef CONFIG_ARCH_AARCH64
     MSR("mdcr_el2", hdcr);
@@ -110,6 +141,26 @@ static inline void initHDCR(void)
 
 #ifdef CONFIG_HARDWARE_DEBUG_API
 
+/** These next two functions are part of some state flags.
+ *
+ * A bitfield of all currently enabled breakpoints for a thread is kept in that
+ * thread's TCB. These two functions here set and unset the bits in that
+ * bitfield.
+ */
+static inline void setBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf |= BIT(bp_num);
+    }
+}
+
+static inline void unsetBreakpointUsedFlag(tcb_t *t, uint16_t bp_num)
+{
+    if (t != NULL) {
+        t->tcbArch.tcbContext.breakpointState.used_breakpoints_bf &= ~BIT(bp_num);
+    }
+}
+
 static uint16_t convertBpNumToArch(uint16_t bp_num)
 {
     if (bp_num >= seL4_NumExclusiveBreakpoints) {
@@ -131,6 +182,7 @@ static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
                                                                  bool_t is_reply)
 {
     word_t type;
+    (void) type;
     syscall_error_t ret = {
         .type = seL4_NoError
     };
@@ -147,6 +199,7 @@ static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
             return ret;
         }
 
+#ifdef CONFIG_ARCH_AARCH32
         type = seL4_InstructionBreakpoint;
         bp_num = t->tcbArch.tcbContext.breakpointState.single_step_hw_bp_num;
     } else {
@@ -171,6 +224,7 @@ static inline syscall_error_t Arch_decodeConfigureSingleStepping(tcb_t *t,
             ret.invalidArgumentNumber = 0;
             return ret;
         }
+#endif /* CONFIG_ARCH_AARCH32*/
     }
 
     return ret;
@@ -206,12 +260,15 @@ static inline syscall_error_t Arch_decodeSetBreakpoint(tcb_t *t,
         }
     }
 
+#ifdef CONFIG_ARCH_AARCH32
     if (size == 8 && !byte8WatchpointsSupported()) {
         userError("Debug: 8-byte watchpoints not supported on this CPU.");
         ret.type = seL4_InvalidArgument;
         ret.invalidArgumentNumber = 3;
         return ret;
     }
+#endif /* CONFIG_ARCH_AARCH32 */
+
     if (size == 8 && type != seL4_DataBreakpoint) {
         userError("Debug: 8-byte sizes can only be used with watchpoints.");
         ret.type = seL4_InvalidArgument;
@@ -250,18 +307,21 @@ static inline syscall_error_t Arch_decodeUnsetBreakpoint(tcb_t *t, uint16_t bp_n
 
     word_t type;
     dbg_bcr_t bcr;
+    (void) bcr;
 
     type = getTypeFromBpNum(bp_num);
     bp_num = convertBpNumToArch(bp_num);
 
     bcr.words[0] = t->tcbArch.tcbContext.breakpointState.breakpoint[bp_num].cr;
     if (type == seL4_InstructionBreakpoint) {
+#ifdef CONFIG_ARCH_AARCH32
         if (Arch_breakpointIsMismatch(bcr) == true && dbg_bcr_get_enabled(bcr)) {
             userError("Rejecting call to unsetBreakpoint on breakpoint configured "
                       "for single-stepping (hwid %u).", bp_num);
             ret.type = seL4_IllegalOperation;
             return ret;
         }
+#endif /* CONFIG_ARCH_AARCH32 */
     }
 
     return ret;
