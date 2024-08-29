@@ -229,16 +229,12 @@ uint16_t getBpNumFromType(uint16_t bp_num, word_t type)
     }
 }
 
-static void calculate_wcr_BAS(seL4_Word address, seL4_Word size, seL4_Word *set_address, seL4_Word* bas) {
-    if (address % 4 == 0) {
-        *set_address = address;
-    } else {
-        *set_address = address & ~0x3; // Align to 4-byte boundary
-    }
+static seL4_Word calculate_wcr_BAS(seL4_Word address, seL4_Word size) {
+    seL4_Word bas = 0;
+    seL4_Word set_address = address & ~0x7;
 
-    *bas = 0;
-    for (int i = address - *set_address; i < (address - *set_address) + size; i++) {
-        *bas |= (1 << i);
+    for (int i = address - set_address; i < (address - set_address) + size; i++) {
+        bas |= (1 << i);
     }
 }
 
@@ -302,6 +298,10 @@ void setBreakpoint(tcb_t *t,
         writeBcrContext(t, bp_num, bcr.words[0]);
     } else {
         dbg_wcr_t wcr;
+        
+        /* Address has to be aligned to 8 byte boundary */
+        word_t set_vaddr = vaddr & ~0x7;
+        word_t bas = calculate_wcr_BAS(vaddr, size);
 
         word_t bas;
         word_t set_vaddr;
@@ -467,22 +467,14 @@ int getAndResetActiveBreakpoint(word_t vaddr, word_t reason)
 
             wcr.words[0] = readWcrCp(i);
 
-            /* Align to the previous word*/
-            if (!dbg_wcr_get_enabled(wcr) || (vaddr & ~0x3) != wvr) {
+            /* Align the fault address to the previous word */
+            if (!dbg_wcr_get_enabled(wcr) || (vaddr & ~0x7) != wvr) {
                 continue;
             }
-
-            if (vaddr % 4 != 0) {
-                int offset = vaddr % 4;
-                if ((dbg_wcr_get_bas(wcr) & offset) == 0) {
-                    continue;
-                }
-            }
-
-            align_mask = convertArchToSize(dbg_wcr_get_bas(wcr));
-            align_mask = ~(align_mask - 1);
-
-            if (wvr != (vaddr & align_mask) || !dbg_wcr_get_enabled(wcr)) {
+            
+            /* Check if the BAS set for this watchpoint corresponds to this vaddr */
+            int offset = vaddr & 0x7;
+            if ((dbg_wcr_get_bas(wcr) & (1 << offset)) == 0) {
                 continue;
             }
 
