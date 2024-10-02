@@ -13,7 +13,8 @@ from jinja2 import Environment, BaseLoader
 import argparse
 import sys
 import xml.dom.minidom
-from condition import condition_to_cpp
+from condition import condition_to_cpp, condition_to_bool
+import json
 
 
 COMMON_HEADER = """
@@ -130,6 +131,7 @@ def parse_args():
                         help='Name of file to create', required=True)
     parser.add_argument('--libsel4', action='store_true',
                         help='Is this being generated for libsel4?')
+    parser.add_argument("--json")
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--arch', action='store_true',
                        help='Is this being generated for the arch layer?')
@@ -150,6 +152,23 @@ def parse_xml(xml_file):
     for method in doc.getElementsByTagName("method"):
         invocation_labels.append((str(method.getAttribute("id")),
                                   str(condition_to_cpp(method.getElementsByTagName("condition")))))
+
+    return invocation_labels
+
+
+def xml_to_json_invocations(xml_file, config_values):
+    try:
+        doc = xml.dom.minidom.parse(xml_file)
+    except:
+        print("Error: invalid xml file", file=sys.stderr)
+        sys.exit(-1)
+
+    invocation_labels = []
+    for method in doc.getElementsByTagName("method"):
+        label = str(method.getAttribute("id"))
+        exists = condition_to_bool(method.getElementsByTagName("condition"), config_values)
+        if exists:
+            invocation_labels.append(label)
 
     return invocation_labels
 

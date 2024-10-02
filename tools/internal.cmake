@@ -41,6 +41,7 @@ function(gen_invocation_header)
             "${PYTHON3}" "${INVOCATION_ID_GEN_PATH}"
             --xml "${xml_absolute}" ${libsel4_setting} ${arch_setting}
             --dest "${GEN_OUTPUT}"
+            --json "invocation_test.json"
         DEPENDS "${xml_absolute}" "${INVOCATION_ID_GEN_PATH}"
         COMMENT "Generate invocation header ${GEN_OUTPUT}"
     )
