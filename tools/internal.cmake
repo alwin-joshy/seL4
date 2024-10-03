@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.7.2)
 # File for helpers that are very specific to the kernel
 
 function(gen_invocation_header)
-    cmake_parse_arguments(PARSE_ARGV 0 "GEN" "LIBSEL4;ARCH;SEL4ARCH" "OUTPUT;XML" "")
+    cmake_parse_arguments(PARSE_ARGV 0 "GEN" "LIBSEL4;ARCH;SEL4ARCH" "OUTPUT;XML;JSON_OUTPUT" "")
     if(NOT "${GEN_UNPARSED_ARGUMENTS}" STREQUAL "")
         message(FATAL_ERROR "Unknown arguments to gen_invocation_header: ${GEN_UNPARSED_ARGUMENTS}")
     endif()
@@ -28,21 +28,30 @@ function(gen_invocation_header)
         set(arch_setting "--sel4_arch")
     endif()
     set(libsel4_setting "")
+    set(json_setting "")
+    set(gen_config_path "")
     if(GEN_LIBSEL4)
         set(libsel4_setting "--libsel4")
+    else()
+        if("${GEN_JSON_OUTPUT}" STREQUAL "")
+            message(FATAL_ERROR "JSON_OUTPUT must be specified")
+        endif()
+        set(gen_config_path "${CMAKE_CURRENT_BINARY_DIR}/gen_config/kernel/gen_config.json")
+        set(json_setting "--gen_config" "${gen_config_path}" "--json" "${GEN_JSON_OUTPUT}")
     endif()
+
     # Turn the input xml into an absolute path as we build commands that may be
     # be run with a working directory that is not the current source directory
     get_absolute_source_or_binary(xml_absolute "${GEN_XML}")
+
     add_custom_command(
-        OUTPUT "${GEN_OUTPUT}"
-        COMMAND rm -f "${GEN_OUTPUT}"
+        OUTPUT ${GEN_OUTPUT} ${GEN_JSON_OUTPUT}
+        COMMAND rm -f "${GEN_OUTPUT}" "${GEN_JSON_OUTPUT}"
         COMMAND
-            "${PYTHON3}" "${INVOCATION_ID_GEN_PATH}"
+            "${PYTHON3}" "${INVOCATION_ID_GEN_PATH}" ${json_setting}
             --xml "${xml_absolute}" ${libsel4_setting} ${arch_setting}
             --dest "${GEN_OUTPUT}"
-            --json "invocation_test.json"
-        DEPENDS "${xml_absolute}" "${INVOCATION_ID_GEN_PATH}"
+        DEPENDS "${xml_absolute}" "${INVOCATION_ID_GEN_PATH}" "${gen_config_path}"
         COMMENT "Generate invocation header ${GEN_OUTPUT}"
     )
 endfunction(gen_invocation_header)

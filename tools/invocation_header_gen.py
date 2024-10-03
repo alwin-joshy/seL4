@@ -131,7 +131,10 @@ def parse_args():
                         help='Name of file to create', required=True)
     parser.add_argument('--libsel4', action='store_true',
                         help='Is this being generated for libsel4?')
-    parser.add_argument("--json")
+    parser.add_argument("--gen_config", type=argparse.FileType('r'),
+                        help='Location of gen_config JSON')
+    parser.add_argument("--json", type=argparse.FileType('w+'),
+                        help='Name of json file to store invocations')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--arch', action='store_true',
                        help='Is this being generated for the arch layer?')
@@ -141,36 +144,24 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_xml(xml_file):
-    try:
-        doc = xml.dom.minidom.parse(xml_file)
-    except:
-        print("Error: invalid xml file", file=sys.stderr)
-        sys.exit(-1)
-
+def parse_xml(xml):
     invocation_labels = []
-    for method in doc.getElementsByTagName("method"):
+    for method in xml.getElementsByTagName("method"):
         invocation_labels.append((str(method.getAttribute("id")),
                                   str(condition_to_cpp(method.getElementsByTagName("condition")))))
 
     return invocation_labels
 
 
-def xml_to_json_invocations(xml_file, config_values):
-    try:
-        doc = xml.dom.minidom.parse(xml_file)
-    except:
-        print("Error: invalid xml file", file=sys.stderr)
-        sys.exit(-1)
-
-    invocation_labels = []
-    for method in doc.getElementsByTagName("method"):
+def xml_to_json_invocations(xml, config_values):
+    res = []
+    for method in xml.getElementsByTagName("method"):
         label = str(method.getAttribute("id"))
         exists = condition_to_bool(method.getElementsByTagName("condition"), config_values)
         if exists:
-            invocation_labels.append(label)
+            res.append(label)
 
-    return invocation_labels
+    return res
 
 
 def generate(args, invocations):
@@ -205,7 +196,17 @@ def generate(args, invocations):
 if __name__ == "__main__":
     args = parse_args()
 
-    invocations = parse_xml(args.xml)
+    try:
+        xml = xml.dom.minidom.parse(args.xml)
+    except:
+        print("Error: invalid XML file", file=sys.stderr)
+        sys.exit(-1)
+
+    if args.gen_config and args.json:
+        res = xml_to_json_invocations(xml, json.load(args.gen_config))
+        json.dump(res, args.json)
+
+    invocations = parse_xml(xml)
     args.xml.close()
 
     generate(args, invocations)

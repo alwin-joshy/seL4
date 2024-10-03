@@ -35,6 +35,7 @@ RequireTool(CONFIG_GEN_PATH config_gen.py)
 RequireTool(BF_GEN_PATH bitfield_gen.py)
 RequireTool(HARDWARE_GEN_PATH hardware_gen.py)
 RequireTool(INVOCATION_ID_GEN_PATH invocation_header_gen.py)
+RequireTool(INVOCATION_JSON_GEN_PATH invocation_json_gen.py)
 RequireTool(SYSCALL_ID_GEN_PATH syscall_header_gen.py)
 RequireTool(XMLLINT_PATH xmllint.sh)
 
@@ -403,32 +404,55 @@ add_custom_target(kernel_all_c_wrapper DEPENDS kernel_all.c)
 
 set(xml_headers "")
 set(header_dest "gen_headers/arch/api/invocation.h")
+set(arch_invocation_json_dest "generated/arch/api/invocation.json")
 gen_invocation_header(
     OUTPUT ${header_dest}
+    JSON_OUTPUT ${arch_invocation_json_dest}
     XML
         ${CMAKE_CURRENT_SOURCE_DIR}/libsel4/arch_include/${KernelArch}/interfaces/object-api-arch.xml
     ARCH
 )
 list(APPEND xml_headers "${header_dest}")
 list(APPEND gen_files_list "${header_dest}")
+list(APPEND gen_files_list "${arch_invocation_json_dest}")
 
 set(header_dest "gen_headers/arch/api/sel4_invocation.h")
+set(sel4_arch_invocation_json_dest "generated/arch/api/sel4_invocation.json")
 gen_invocation_header(
     OUTPUT "${header_dest}"
+    JSON_OUTPUT ${sel4_arch_invocation_json_dest}
     XML
         "${CMAKE_CURRENT_SOURCE_DIR}/libsel4/sel4_arch_include/${KernelSel4Arch}/interfaces/object-api-sel4-arch.xml"
     SEL4ARCH
 )
 list(APPEND xml_headers "${header_dest}")
 list(APPEND gen_files_list "${header_dest}")
+list(APPEND gen_files_list "${sel4_arch_invocation_json_dest}")
 
 set(header_dest "gen_headers/api/invocation.h")
+set(invocation_json_dest "generated/api/invocation.json")
 gen_invocation_header(
     OUTPUT "${header_dest}"
+    JSON_OUTPUT ${invocation_json_dest}
     XML "${CMAKE_CURRENT_SOURCE_DIR}/libsel4/include/interfaces/object-api.xml"
 )
 list(APPEND xml_headers "${header_dest}")
 list(APPEND gen_files_list "${header_dest}")
+list(APPEND gen_files_list "${invocation_json_dest}")
+
+add_custom_command(
+    OUTPUT generated/invocations_all.json
+    COMMAND rm -f generated/invocations_all.json
+    COMMAND
+        "${PYTHON3}" "${INVOCATION_JSON_GEN_PATH}"
+        --invocation "${invocation_json_dest}"
+        --arch_invocation "${arch_invocation_json_dest}"
+        --sel4_arch_invocation "${sel4_arch_invocation_json_dest}"
+        --dest generated/invocations_all.json
+    DEPENDS "${INVOCATION_JSON_GEN_PATH}" "${invocation_json_dest}" "${arch_invocation_json_dest}" "${sel4_arch_invocation_json_dest}"
+)
+list(APPEND gen_files_list "generated/invocations_all.json")
+
 
 set(syscall_xml_base "${CMAKE_CURRENT_SOURCE_DIR}/libsel4/include/api")
 set(syscall_dest "gen_headers/arch/api/syscall.h")
