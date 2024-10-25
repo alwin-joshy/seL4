@@ -174,6 +174,23 @@ class PointerType(Type):
     def pointer(self):
         raise NotImplementedError()
 
+class ArrayType(Type):
+    """
+    An array of a standard type
+    """
+
+    def __init__(self, name, size_bits, wordsize):
+        Type.__init__(self, name, size_bits, wordsize)
+
+    def set_size(self, max_elems):
+        self.max_elems = max_elems;
+
+    def render_parameter_name(self, name):
+        return "%s *%s" % (self.name[:-2], name)
+
+    def c_expression(self, var_name, word_num):
+        return "%s[%d]" % (var_name, word_num)
+
 
 class CapType(Type):
     """
@@ -242,6 +259,8 @@ def init_data_types(wordsize):
         Type("seL4_Time", 64, wordsize, double_word=(wordsize == 32)),
         Type("seL4_Word", wordsize, wordsize),
         Type("seL4_Bool", 1, wordsize, native_size_bits=8),
+
+        ArrayType("seL4_Word[]", wordsize, wordsize),
 
         # seL4 Structures
         BitFieldType("seL4_CapRights_t", wordsize, wordsize),
@@ -610,10 +629,13 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
 
     # Split out cap parameters and standard parameters
     standard_params = []
+    array_params = []
     cap_params = []
     for x in input_params:
         if isinstance(x.type, CapType):
             cap_params.append(x)
+        elif isinstance(x.type, ArrayType):
+            array_params.append(x)
         else:
             standard_params.append(x)
 
@@ -662,8 +684,29 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
     # Setup variables we will need.
     #
     result.append("\t%s result;" % return_type)
-    result.append("\tseL4_MessageInfo_t tag = seL4_MessageInfo_new(%s, 0, %d, %d);" %
-                  (method_id, len(cap_expressions), len(input_expressions)))
+
+    #
+    # Find the size of the message with the array arguments
+    #
+
+    # It's a pain to marshall contents of the array into registers, so we pad out to the
+    # start of the IPC buffer
+
+    array_size_expr = ""
+    if len(array_params) != 0:
+        padding = max(0, num_mrs - len(input_expressions))
+        if padding > 0:
+            array_size_expr = "+ " + str(padding) + " "
+
+    #
+    # Generate checks that all sizes are less than the max sizes of arrays
+    #
+    for array in array_params:
+        result.append("\tif (%s > %d) return seL4_InvalidArgument;" % (array.name + "_size", array.type.max_elems))
+        array_size_expr += "+ %s" % (array.name + "_size")
+
+    result.append("\tseL4_MessageInfo_t tag = seL4_MessageInfo_new(%s, 0, %d, %d %s);" %
+                  (method_id, len(cap_expressions), len(input_expressions), array_size_expr))
     result.append("\tseL4_MessageInfo_t output_tag;")
     for i in range(num_mrs):
         result.append("\tseL4_Word mr%d;" % i)
@@ -699,6 +742,20 @@ def generate_stub(arch, wordsize, interface_name, method_name, method_id, input_
         # Initialise buffered parameters
         for i in range(num_mrs, len(input_expressions)):
             result.append("\tseL4_SetMR(%d, %s);" % (i, input_expressions[i]))
+        result.append("")
+
+    #
+    # Copy the array inputs into the ipc buffer
+    #
+    # for (seL4_Word i = 0; i < array_size; i++)
+    #   seL4_setMR(start + i, array[i])
+    start = max(num_mrs, len(input_expressions))
+
+    result.append("\tseL4_Word arr_start = %s;" % (str(start)))
+    for array in array_params:
+        result.append("\tfor (seL4_Word i = 0; i < %s; i++)" % (array.name + "_size"))
+        result.append("\t\tseL4_SetMR(arr_start + i, %s[i]);" % (array.name));
+        result.append("\tarr_start += %s;" % (array.name + "_size"))
         result.append("")
 
     #
@@ -910,6 +967,7 @@ def parse_xml_file(input_file, valid_types):
 
             comment_lines.append("@param[in] _service %s" % cap_description)
             output_params = []
+            observed_array = False
             for param in method.getElementsByTagName("param"):
                 param_name = param.getAttribute("name")
                 param_type = type_names.get(param.getAttribute("type"))
@@ -920,6 +978,8 @@ def parse_xml_file(input_file, valid_types):
                 if param_dir == "in":
                     input_params.append(Parameter(param_name, param_type))
                 else:
+                    if isinstance(param_type, ArrayType):
+                        raise Exception("Output array types unsupported")
                     output_params.append(Parameter(param_name, param_type))
 
                 if param_dir == "in" or param_type.pass_by_reference():
@@ -933,6 +993,15 @@ def parse_xml_file(input_file, valid_types):
 
                     comment_lines.append("@param[%s] %s %s " %
                                          (param_dir, param_name, param_description))
+
+                # For arrays, check that the mandatory array_size is also present
+                if isinstance(param_type, ArrayType):
+                    size_params = list(filter(lambda x: (x.getAttribute("name") == param_name + "_size"),
+                                              method.getElementsByTagName("param")))
+                    if len(size_params) != 1:
+                        raise Exception("Did not find definition of '%s'" % (param_name + "_size"))
+
+                    param_type.set_size(int(param.getAttribute("max_size")))
 
             method_return_description = method.getElementsByTagName("return")
             if method_return_description:
@@ -1020,7 +1089,8 @@ def generate_stub_file(arch, input_files, output_file, use_only_ipc_buffer, mcs,
                 (sizeof(type) == expected_bytes) ? 1 : -1]
 """)
     for x in data_types + arch_types[arch]:
-        result.append("assert_size_correct(%s, %d);" % (x.name, x.native_size_bits / 8))
+        if (not isinstance(x, ArrayType)):
+            result.append("assert_size_correct(%s, %d);" % (x.name, x.native_size_bits / 8))
     result.append("")
 
     #

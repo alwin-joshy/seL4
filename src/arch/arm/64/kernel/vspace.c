@@ -1298,22 +1298,154 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot,
     return EXCEPTION_NONE;
 }
 
+#define MAX_BATCH 32
+
 static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
                                                  cte_t *cte, cap_t cap, word_t *buffer)
 {
-    vptr_t start, end;
-    paddr_t pstart;
-    asid_t asid;
-    vspace_root_t *vspaceRoot;
-    lookupPTSlot_ret_t resolve_ret;
-    findVSpaceForASID_ret_t find_ret;
-    pte_t pte;
-
     switch (invLabel) {
+    case ARMVSpaceMap_Range: {
+        vptr_t vaddr = getSyscallArg(0, buffer);
+        seL4_Word rights_word = getSyscallArg(1, buffer);
+        vm_attributes_t attributes = vmAttributesFromWord(getSyscallArg(2, buffer));
+        seL4_Word num = getSyscallArg(3, buffer);
+
+        if (num > MAX_BATCH) {
+            userError("VSpaceRoot Map Range: Too many caps provided.");
+            current_syscall_error.type = seL4_InvalidArgument;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(!isValidNativeRoot(cap))) {
+            userError("VSpaceRoot Map Range: Invalid vspace");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        vspace_root_t *vspaceRoot = VSPACE_PTR(cap_vspace_cap_get_capVSBasePtr(cap));;
+        asid_t asid = cap_vspace_cap_get_capVSMappedASID(cap);
+
+        findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+            userError("VSpaceRoot Map Range: No VSpace for ASID");
+            current_syscall_error.type = seL4_FailedLookup;
+            current_syscall_error.failedLookupWasSource = false;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (unlikely(find_ret.vspace_root != vspaceRoot)) {
+            userError("VSpaceRoot Map Range: Invalid VSpace cap");
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        seL4_Word *cap_set = &buffer[n_msgRegisters + 1];
+        seL4_Word curr_vaddr = vaddr;
+
+        lookupCapAndSlot_ret_t lu_ret[MAX_BATCH] = {0};
+        lookupPTSlot_ret_t pt_ret[MAX_BATCH] = {0};
+
+        for (int i = 0; i < num; i++) {
+            lu_ret[i] = lookupCapAndSlot(NODE_STATE(ksCurThread), cap_set[i]);
+            if (unlikely(lu_ret[i].status != EXCEPTION_NONE)) {
+                userError("VSpaceRoot Map Range: Capaility lookup of %lu failed", cap_set[i]);
+                current_syscall_error.type = seL4_FailedLookup;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (cap_get_capType(lu_ret[i].cap) != cap_frame_cap) {
+                userError("VSpaceRoot Map Range: Capability %lu is not a frame cap", cap_set[i]);
+                current_syscall_error.type = seL4_InvalidCapability;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            vm_page_size_t frame_size = cap_frame_cap_get_capFSize(lu_ret[i].cap);
+            seL4_Word frame_size_bytes = BIT(pageBitsForSize(frame_size));
+
+            /* Check alignment */
+            if (curr_vaddr % frame_size_bytes != 0) {
+                userError("VSpaceRoot Map Range: Frame %lu is not aligned in the range", cap_set[i]);
+                current_syscall_error.type = seL4_AlignmentError;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            asid_t frame_asid = cap_frame_cap_ptr_get_capFMappedASID(&lu_ret[i].cap);
+            bool_t remap = false;
+
+            if (frame_asid != asidInvalid) {
+                if (frame_asid != asid) {
+                    userError("VSpaceRoot Map Range: Attempting to remap a frame that doesn't belong to the address space");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    // TODO: Cap number
+                    return EXCEPTION_SYSCALL_ERROR;
+                } else if (cap_frame_cap_get_capFMappedAddress(lu_ret[i].cap) != curr_vaddr) {
+                    userError("VSpaceRoot Map Range: Attempting to map frame into multiple addresses");
+                    current_syscall_error.type = seL4_InvalidArgument;
+                    // TODO: Number?
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                remap = true;
+            } else {
+                if (unlikely(curr_vaddr + frame_size_bytes - 1 > USER_TOP)) {
+                    userError("VSpaceRoot Map Range: Exceeds user-addressable range");
+                    current_syscall_error.type = seL4_InvalidArgument;
+                    // TODO: Which arg?
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            }
+
+            pt_ret[i] = lookupPTSlot(vspaceRoot, curr_vaddr);
+
+            if (unlikely(pt_ret[i].ptBitsLeft > pageBitsForSize(frame_size))) {
+                userError("VSpaceRoot Map Range: Missing intermediate paging structures");
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (pte_is_page_type(*pt_ret[i].ptSlot) && !remap) {
+                userError("VSpaceRoot Map Range: Mapping collision");
+                current_syscall_error.type = seL4_DeleteFirst;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            curr_vaddr += frame_size_bytes;
+        }
+
+        curr_vaddr = vaddr;
+        for (int i = 0; i < num; i++) {
+            lu_ret[i].cap = cap_frame_cap_set_capFMappedASID(lu_ret[i].cap, asid);
+            lu_ret[i].cap = cap_frame_cap_set_capFMappedAddress(lu_ret[i].cap, curr_vaddr);
+            paddr_t base = pptr_to_paddr((void *) cap_frame_cap_get_capFBasePtr(lu_ret[i].cap));
+            vm_rights_t vmRights = maskVMRights(cap_frame_cap_get_capFVMRights(lu_ret[i].cap),
+                                                rightsFromWord(rights_word));
+
+            vm_page_size_t frame_size = cap_frame_cap_get_capFSize(lu_ret[i].cap);
+            seL4_Word frame_size_bytes = BIT(pageBitsForSize(frame_size));
+
+            performPageInvocationMap(asid, lu_ret[i].cap, lu_ret[i].slot,
+                                     makeUserPagePTE(base, vmRights, attributes, frame_size), pt_ret[i].ptSlot);
+
+            curr_vaddr += frame_size_bytes;
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        return EXCEPTION_NONE;
+    }
     case ARMVSpaceClean_Data:
     case ARMVSpaceInvalidate_Data:
     case ARMVSpaceCleanInvalidate_Data:
-    case ARMVSpaceUnify_Instruction:
+    case ARMVSpaceUnify_Instruction: {
+        vptr_t start, end;
+        paddr_t pstart;
+        asid_t asid;
+        vspace_root_t *vspaceRoot;
+        lookupPTSlot_ret_t resolve_ret;
+        findVSpaceForASID_ret_t find_ret;
+        pte_t pte;
 
         if (length < 2) {
             userError("VSpaceRoot Flush: Truncated message.");
@@ -1404,6 +1536,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         return performVSpaceFlush(invLabel, vspaceRoot, asid, start, end - 1, pstart);
 
+    }
     default:
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;

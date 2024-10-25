@@ -216,6 +216,75 @@
                 </description>
             </error>
         </method>
+        <method id="ARMVSpaceMap_Range" name="Map_Range" manual_name="Map Range" manual_label="vspace_map_range">
+            <brief>
+                Map a set of capabilities into a virtual address range.
+            </brief>
+             <description>
+                 <docref>See <autoref label="ch:vspace"/>.</docref>
+             </description>
+            <param dir="in" name="start_vaddr" type="seL4_Word">
+                <description>
+                    The start of the virtual address range to map the capabilities to.
+                </description>
+            </param>
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                    The rights to assign to each page in the range.
+                </description>
+            </param>
+            <param dir="in" name="attr" type="seL4_ARM_VMAttributes">
+                <description>
+                    VM attributes for the mapping.
+                </description>
+            </param>
+            <param dir="in" name="cap_set" type="seL4_Word[]" max_size="32">
+                <description>
+                    List of capabilities to map in this invocation. Any combination of page sizes
+                    can be used, but the resulting range must not have any holes as a result of
+                    alignment issues.
+                </description>
+            </param>
+            <param dir="in" name="cap_set_size" type="seL4_Word">
+                <description>
+                    Number of capabilities specified in cap_set
+                </description>
+            </param>
+            <error name="seL4_AlignmentError">
+                <description>
+                    The <texttt text="vaddr" /> is not aligned to the size of the frame set.
+                </description>
+            </error>
+            <error name="seL4_DeleteFirst">
+                <description>
+                    A mapping already exists in the virtual address range provided
+                </description>
+            </error>
+            <error name="seL4_TruncatedMessage">
+                <description>
+                    Too few arguments were passed in to the system call
+                </description>
+            </error>
+            <error name = "seL4_InvalidArgument">
+                <description>
+                    <texttt text="cap_set_size" /> is too large.
+                </description>
+            </error>
+            <error name="seL4_InvalidCapability">
+                <description>
+                    The <texttt text="serivce" /> is not a vspace capability.
+                    Or, one of the capabilities in <texttt text="cap_set" /> is not a valid frame capability.
+                    Or, one of the frame capabilities in <texttt text="cap_set" /> is already mapped at a different virtual address.
+                </description>
+            </error>
+            <error name="seL4_FailedLookup">
+                <description>
+                    The <texttt text="serivce" /> is not a vspace capability.
+                    Or, one of the capabilities in the <texttt text="cap_set" /> could not be looked up.
+                    Or, <texttt text="serivce" /> is missing intermediate paging structures.
+                </description>
+            </error>
+        </method>
     </interface>
     <interface name="seL4_ARM_SMC" manual_name="SMC" cap_description="Capability to allow threads to make Secure Monitor Calls.">
         <method id="ARMSMCCall" name="Call" manual_name="SMC Call" manual_label="smc_call">
