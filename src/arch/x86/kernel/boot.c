@@ -327,7 +327,7 @@ BOOT_CODE bool_t init_sys_state(
 #endif
 
     /* create all of the untypeds. Both devices and kernel window memory */
-    if (!create_untypeds(root_cnode_cap)) {
+    if (!create_untypeds(root_cnode_cap, ndks_boot.slot_pos_cur)) {
         return false;
     }
 

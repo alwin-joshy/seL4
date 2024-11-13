@@ -44,7 +44,6 @@ import os
 
 StringTypes = (str, bytes)
 
-
 def func_code(f):
     return f.__code__
 

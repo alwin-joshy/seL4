@@ -41,6 +41,7 @@ BOOT_BSS static region_t reserved[NUM_RESERVED_REGIONS];
 
 BOOT_CODE static bool_t arch_init_freemem(p_region_t ui_p_reg,
                                           p_region_t dtb_p_reg,
+                                          p_region_t extra_device_p_reg,
                                           v_region_t it_v_reg,
                                           word_t extra_bi_size_bits)
 {
@@ -57,6 +58,13 @@ BOOT_CODE static bool_t arch_init_freemem(p_region_t ui_p_reg,
         }
         reserved[index].start = (pptr_t) paddr_to_pptr(dtb_p_reg.start);
         reserved[index].end = (pptr_t) paddr_to_pptr(dtb_p_reg.end);
+        index++;
+    }
+
+    if (extra_device_p_reg.start) {
+        /* the dtb region could be empty */
+        reserved[index].start = (pptr_t) paddr_to_pptr(extra_device_p_reg.start);
+        reserved[index].end = (pptr_t) paddr_to_pptr(extra_device_p_reg.end);
         index++;
     }
 
@@ -332,7 +340,9 @@ static BOOT_CODE bool_t try_init_kernel(
     sword_t pv_offset,
     vptr_t  v_entry,
     paddr_t dtb_phys_addr,
-    word_t  dtb_size
+    word_t  dtb_size,
+    paddr_t extra_device_addr_start,
+    word_t extra_device_size
 )
 {
     cap_t root_cnode_cap;
@@ -342,6 +352,9 @@ static BOOT_CODE bool_t try_init_kernel(
     p_region_t ui_p_reg = (p_region_t) {
         ui_p_reg_start, ui_p_reg_end
     };
+    p_region_t extra_device_p_reg = (p_region_t) {
+        extra_device_addr_start, extra_device_addr_start + extra_device_size
+    };
     region_t ui_reg = paddr_to_pptr_reg(ui_p_reg);
     word_t extra_bi_size = 0;
     pptr_t extra_bi_offset = 0;
@@ -350,6 +363,7 @@ static BOOT_CODE bool_t try_init_kernel(
     vptr_t ipcbuf_vptr;
     create_frames_of_region_ret_t create_frames_ret;
     create_frames_of_region_ret_t extra_bi_ret;
+    seL4_SlotPos first_untyped_slot;
 
     /* convert from physical addresses to userland vptrs */
     v_region_t ui_v_reg = {
@@ -424,7 +438,7 @@ static BOOT_CODE bool_t try_init_kernel(
         return false;
     }
 
-    if (!arch_init_freemem(ui_p_reg, dtb_p_reg, it_v_reg, extra_bi_size_bits)) {
+    if (!arch_init_freemem(ui_p_reg, dtb_p_reg, extra_device_p_reg, it_v_reg, extra_bi_size_bits)) {
         printf("ERROR: free memory management initialization failed\n");
         return false;
     }
@@ -583,8 +597,13 @@ static BOOT_CODE bool_t try_init_kernel(
 
     init_core_state(initial);
 
+    first_untyped_slot = ndks_boot.slot_pos_cur;
+    if (extra_device_addr_start) {
+        create_untypeds_for_region(root_cnode_cap, true, paddr_to_pptr_reg(extra_device_p_reg), first_untyped_slot);
+    }
+
     /* create all of the untypeds. Both devices and kernel window memory */
-    if (!create_untypeds(root_cnode_cap)) {
+    if (!create_untypeds(root_cnode_cap, first_untyped_slot)) {
         printf("ERROR: could not create untypteds for kernel image boot memory\n");
         return false;
     }
@@ -632,7 +651,9 @@ BOOT_CODE VISIBLE void init_kernel(
     sword_t pv_offset,
     vptr_t  v_entry,
     paddr_t dtb_addr_p,
-    uint32_t dtb_size
+    uint64_t dtb_size,
+    paddr_t extra_device_addr_p,
+    uint64_t extra_device_size
 )
 {
     bool_t result;
@@ -644,7 +665,9 @@ BOOT_CODE VISIBLE void init_kernel(
                                  ui_p_reg_end,
                                  pv_offset,
                                  v_entry,
-                                 dtb_addr_p, dtb_size);
+                                 dtb_addr_p, dtb_size,
+                                 extra_device_addr_p, extra_device_size
+                                 );
     } else {
         result = try_init_kernel_secondary_core();
     }
@@ -654,7 +677,9 @@ BOOT_CODE VISIBLE void init_kernel(
                              ui_p_reg_end,
                              pv_offset,
                              v_entry,
-                             dtb_addr_p, dtb_size);
+                             dtb_addr_p, dtb_size,
+                             extra_device_addr_p, extra_device_size
+                             );
 
 #endif /* ENABLE_SMP_SUPPORT */
 
