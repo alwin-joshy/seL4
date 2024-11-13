@@ -61,6 +61,10 @@ deriveCap_ret_t Arch_deriveCap(cte_t *slot, cap_t cap)
         ret.status = EXCEPTION_NONE;
         return ret;
 
+    case cap_pmu_control_cap:
+        ret.cap = cap;
+        ret.status = EXCEPTION_NONE;
+
     case cap_asid_control_cap:
     case cap_asid_pool_cap:
         ret.cap = cap;

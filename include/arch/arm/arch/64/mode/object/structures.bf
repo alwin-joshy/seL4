@@ -135,6 +135,13 @@ block smc_cap {
 }
 #endif
 
+block pmu_control_cap {
+    padding             64
+
+    field capType       5
+    padding             59
+}
+
 -- NB: odd numbers are arch caps (see isArchCap())
 tagged_union cap capType {
     -- 5-bit tag caps
