@@ -179,6 +179,7 @@ tagged_union cap capType {
 #ifdef CONFIG_ALLOW_SMC_CALLS
     tag smc_cap                     25
 #endif
+    tag pmu_control_cap                     27
 }
 
 ---- Arch-independent object types
