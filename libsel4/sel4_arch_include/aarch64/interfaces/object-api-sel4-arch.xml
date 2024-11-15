@@ -289,16 +289,14 @@
 
         <method id="PMUCounterControl" name="CounterControl" manual_name="CounterControl" manual_label="pmucontrol_countercontrol">
             <brief>
-                Control the hardware counter speicifed by the input paramater.
+                Start, stop or reset the PMU.
             </brief>
             <description>
                 See <autoref label="sec:threads"/>
             </description>
             <return><errorenumdesc/></return>
-            <param dir="in" name="counter" type="seL4_Word"
-                description="Hardware counter number you wish to control."/>
             <param dir="in" name="control" type="seL4_Word"
-                description="Control value you wish to write to the hardware"/>
+                description="This is the action we wish to control. 0 - stop, 1 - start, 2 - reset"/>
             <error name="seL4_IllegalOperation">
                 <description>
                     The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
