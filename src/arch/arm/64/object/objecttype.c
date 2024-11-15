@@ -494,6 +494,8 @@ exception_t Arch_decodeInvocation(word_t label, word_t length, cptr_t cptr,
     case cap_smc_cap:
         return decodeARMSMCInvocation(label, length, cptr, slot, cap, call, buffer);
 #endif
+    case cap_pmu_control_cap:
+        return decodePMUControlInvocation(label, length, cptr, slot, cap, call, buffer);
     default:
 #else
 {

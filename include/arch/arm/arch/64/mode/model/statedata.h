@@ -20,6 +20,8 @@
 #include <arch/object/smc.h>
 #endif
 
+#include <arch/object/pmu.h>
+
 /* The top level asid mapping table */
 extern asid_pool_t *armKSASIDTable[BIT(asidHighBits)] VISIBLE;
 

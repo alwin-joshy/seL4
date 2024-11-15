@@ -245,6 +245,8 @@
             <return><errorenumdesc/></return>
             <param dir="in" name="counter" type="seL4_Word"
                 description="Hardware counter number you wish to read from."/>
+            <param dir="out" name="counter_value" type="seL4_Word"
+                description="Value read from the hardware counter." />
             <error name="seL4_IllegalOperation">
                 <description>
                     The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
