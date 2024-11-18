@@ -158,6 +158,21 @@ static exception_t decodePMUControl_CounterControl(word_t length, cap_t cap, wor
     return EXCEPTION_NONE;
 }
 
+static exception_t decodePMUControl_InterruptValue(word_t length, cap_t cap, word_t *buffer)
+{
+    // Get the interrupt flag from the PMU
+    uint32_t irqFlag = 0;
+    MRS(PMOVSCLR_EL0, irqFlag);
+
+    // Clear the interrupt flag
+    uint32_t val = BIT(31);
+    MSR(PMOVSCLR_EL0, val);
+
+    setRegister(NODE_STATE(ksCurThread), msgRegisters[0], irqFlag);
+
+    return EXCEPTION_NONE;
+}
+
 exception_t decodePMUControlInvocation(word_t label, unsigned int length, cptr_t cptr,
                                           cte_t *srcSlot, cap_t cap, bool_t call, word_t *buffer)
 {
@@ -169,6 +184,8 @@ exception_t decodePMUControlInvocation(word_t label, unsigned int length, cptr_t
             return decodePMUControl_WriteEventCounter(length, cap, buffer);
         case PMUCounterControl:
             return decodePMUControl_CounterControl(length, cap, buffer);
+        case PMUInterruptValue:
+            return decodePMUControl_InterruptValue(length, cap, buffer);
         default:
             userError("PMUControl invocation: Illegal operation attempted.");
             current_syscall_error.type = seL4_IllegalOperation;

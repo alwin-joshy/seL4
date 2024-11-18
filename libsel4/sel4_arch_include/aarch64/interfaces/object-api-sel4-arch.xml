@@ -309,6 +309,23 @@
                 </description>
             </error>
         </method>
+
+        <method id="PMUInterruptValue" name="InterruptValue" manual_name="InterruptValue" manual_label="pmucontrol_interruptvalue">
+            <brief>
+                Get the interrupt value of the PMU.
+            </brief>
+            <description>
+                See <autoref label="sec:threads"/>
+            </description>
+            <return><errorenumdesc/></return>
+            <param dir="out" name="interrupt_val" type="seL4_Word"
+                description="This is the return value of the interrupt value."/>
+            <error name="seL4_IllegalOperation">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+        </method>
     </interface>
 
 </api>
