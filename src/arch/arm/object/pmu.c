@@ -43,8 +43,6 @@ static exception_t decodePMUControl_ReadEventCounter(word_t length, cap_t cap, w
             printf("Not a valid counter!\n");
     }
 
-    printf("We are getting to decodePMUControl_ReadEventCounter. This was value of counter: %lu\n", counter);
-
     setRegister(NODE_STATE(ksCurThread), msgRegisters[0], counter_value);
     return EXCEPTION_NONE;
 }
@@ -94,8 +92,6 @@ static exception_t decodePMUControl_WriteEventCounter(word_t length, cap_t cap, 
         default:
             printf("Not a valid counter!\n");
     }
-
-    printf("We are getting to decodePMUControl_WriteEventCounter. This was value of counter: %lu\n", counter);
 
     return EXCEPTION_NONE;
 }
@@ -152,8 +148,6 @@ static exception_t decodePMUControl_CounterControl(word_t length, cap_t cap, wor
         default:
             break;
     }
-
-    printf("We got to decodePMUControl_CounterControl. This is value of cntl_val: %lu\n", cntl_val);
 
     return EXCEPTION_NONE;
 }
