@@ -4,7 +4,7 @@
 
 #define ISB asm volatile("isb")
 
-static exception_t decodePMUControl_ReadEventCounter(word_t length, cap_t cap, word_t *buffer)
+static exception_t decodePMUControl_ReadEventCounter(word_t length, cap_t cap, word_t *buffer, word_t badge)
 {
     seL4_Word counter = getSyscallArg(0, buffer);
 
@@ -47,7 +47,7 @@ static exception_t decodePMUControl_ReadEventCounter(word_t length, cap_t cap, w
     return EXCEPTION_NONE;
 }
 
-static exception_t decodePMUControl_WriteEventCounter(word_t length, cap_t cap, word_t *buffer)
+static exception_t decodePMUControl_WriteEventCounter(word_t length, cap_t cap, word_t *buffer, word_t badge)
 {
     seL4_Word counter = getSyscallArg(0, buffer);
     seL4_Word value = getSyscallArg(1, buffer);
@@ -96,7 +96,7 @@ static exception_t decodePMUControl_WriteEventCounter(word_t length, cap_t cap, 
     return EXCEPTION_NONE;
 }
 
-static exception_t decodePMUControl_CounterControl(word_t length, cap_t cap, word_t *buffer)
+static exception_t decodePMUControl_CounterControl(word_t length, cap_t cap, word_t *buffer, word_t badge)
 {
     seL4_Word cntl_val = getSyscallArg(0, buffer);
 
@@ -152,7 +152,7 @@ static exception_t decodePMUControl_CounterControl(word_t length, cap_t cap, wor
     return EXCEPTION_NONE;
 }
 
-static exception_t decodePMUControl_InterruptValue(word_t length, cap_t cap, word_t *buffer)
+static exception_t decodePMUControl_InterruptValue(word_t length, cap_t cap, word_t *buffer, word_t badge)
 {
     // Get the interrupt flag from the PMU
     uint32_t irqFlag = 0;
@@ -170,16 +170,17 @@ static exception_t decodePMUControl_InterruptValue(word_t length, cap_t cap, wor
 exception_t decodePMUControlInvocation(word_t label, unsigned int length, cptr_t cptr,
                                           cte_t *srcSlot, cap_t cap, bool_t call, word_t *buffer)
 {
+    word_t badge = cap_pmu_control_cap_get_capPMUBadge(cap);
 
     switch(label) {
         case PMUReadEventCounter:
-            return decodePMUControl_ReadEventCounter(length, cap, buffer);
+            return decodePMUControl_ReadEventCounter(length, cap, buffer, badge);
         case PMUWriteEventCounter:
-            return decodePMUControl_WriteEventCounter(length, cap, buffer);
+            return decodePMUControl_WriteEventCounter(length, cap, buffer, badge);
         case PMUCounterControl:
-            return decodePMUControl_CounterControl(length, cap, buffer);
+            return decodePMUControl_CounterControl(length, cap, buffer, badge);
         case PMUInterruptValue:
-            return decodePMUControl_InterruptValue(length, cap, buffer);
+            return decodePMUControl_InterruptValue(length, cap, buffer, badge);
         default:
             userError("PMUControl invocation: Illegal operation attempted.");
             current_syscall_error.type = seL4_IllegalOperation;

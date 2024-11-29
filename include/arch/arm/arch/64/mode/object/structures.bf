@@ -136,8 +136,7 @@ block smc_cap {
 #endif
 
 block pmu_control_cap {
-    padding             64
-
+    field capPMUBadge   64
     field capType       5
     padding             59
 }

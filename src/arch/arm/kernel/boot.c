@@ -184,7 +184,7 @@ BOOT_CODE static void init_smc(cap_t root_cnode_cap)
 
 BOOT_CODE static void init_pmu_control(cap_t root_cnode_cap)
 {
-    write_slot(SLOT_PTR(pptr_of_cap(root_cnode_cap), seL4_CapPMUControl), cap_pmu_control_cap_new());
+    write_slot(SLOT_PTR(pptr_of_cap(root_cnode_cap), seL4_CapPMUControl), cap_pmu_control_cap_new(0));
 }
 
 /** This and only this function initialises the CPU.
