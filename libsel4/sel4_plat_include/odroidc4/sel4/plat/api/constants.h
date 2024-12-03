@@ -8,3 +8,5 @@
 
 #include <sel4/config.h>
 #include <sel4/arch/constants_cortex_a55.h>
+
+#define CONFIG_FEAT_PMUv3 1

@@ -326,6 +326,45 @@
                 </description>
             </error>
         </method>
+
+        <method id="PMURead" name="Read" manual_name="PMURead" manual_label="pmucontrol_read">
+            <brief>
+                Read from a PMU register.
+            </brief>
+            <description>
+                See <autoref label="sec:threads"/>
+            </description>
+            <return><errorenumdesc/></return>
+            <param dir="in" name="register_num" type="seL4_Word"
+                description="This is the regsiter you want to read from, as defined in the enum profiler_registers."/>
+            <param dir="out" name="register_value" type="seL4_Word"
+                description="This is the value that was read from the specified regsiter."/>
+            <error name="seL4_IllegalOperation">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+        </method>
+
+        <method id="PMUWrite" name="Write" manual_name="PMUWrite" manual_label="pmucontrol_write">
+            <brief>
+                Write to a PMU register.
+            </brief>
+            <description>
+                See <autoref label="sec:threads"/>
+            </description>
+            <return><errorenumdesc/></return>
+            <param dir="in" name="register_num" type="seL4_Word"
+                description="This is the regsiter you want to read from, as defined in the enum profiler_registers."/>
+            <param dir="in" name="register_value" type="seL4_Word"
+                description="This is the value that you wish to write to the specified register."/>
+            <error name="seL4_IllegalOperation">
+                <description>
+                    The <texttt text="_service"/> is a CPtr to a capability of the wrong type.
+                </description>
+            </error>
+        </method>
+
     </interface>
 
 </api>
