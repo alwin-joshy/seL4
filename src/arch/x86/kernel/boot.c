@@ -10,6 +10,7 @@
 #include <model/statedata.h>
 #include <object/interrupt.h>
 #include <arch/object/interrupt.h>
+#include <arch/object/pmu.h>
 #include <arch/machine.h>
 #include <arch/kernel/apic.h>
 #include <arch/kernel/boot.h>
@@ -421,6 +422,22 @@ BOOT_CODE bool_t init_cpu(
     if (!vtx_init()) {
         return false;
     }
+#endif
+
+
+    profiler_init();
+#ifdef CONFIG_PROFILER_ENABLE
+    // uint32_t pmu_val = x86_cpuid_eax(0xa, 0);
+
+    // printf("CPUID: Architecture version %lu\n", pmu_val & (BIT(8) - 1));
+    // printf("CPUID: Number of counters %lu\n", (pmu_val >> 8) & (BIT(8) - 1));
+    // printf("CPUID: bit width %lu\n", (pmu_val >> 16) & (BIT(8) - 1));
+    // printf("CPUID: ebx bit vector length %lu\n", (pmu_val >> 24) & (BIT(8) - 1));
+
+    // volatile int i = 0;
+    // while (true) {
+    //     i++;
+    // }
 #endif
 
     return true;
