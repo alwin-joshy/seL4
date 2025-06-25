@@ -236,6 +236,8 @@ static seL4_Word calculate_wcr_BAS(seL4_Word address, seL4_Word size) {
     for (int i = address - set_address; i < (address - set_address) + size; i++) {
         bas |= (1 << i);
     }
+
+    return bas
 }
 
 /** Sets up the requested hardware breakpoint register.
@@ -300,20 +302,16 @@ void setBreakpoint(tcb_t *t,
         dbg_wcr_t wcr;
         
         /* Address has to be aligned to 8 byte boundary */
-        word_t set_vaddr = vaddr & ~0x7;
-        word_t bas = calculate_wcr_BAS(vaddr, size);
+        word_t offset = vaddr & 0x7;
+        vaddr &= ~0x7;
 
-        word_t bas;
-        word_t set_vaddr;
-        calculate_wcr_BAS(vaddr, size, &set_vaddr, &bas);
-
-        writeWvrContext(t, bp_num, set_vaddr);
+        writeWvrContext(t, bp_num, vaddr);
 
         /* Preserve reserved bits */
         wcr.words[0] = readWcrContext(t, bp_num);
         wcr = dbg_wcr_set_enabled(wcr, 1);
         wcr = dbg_wcr_set_pac(wcr, DBGWCR_PRIV_USER);
-        wcr = dbg_wcr_set_bas(wcr, bas);
+        wcr = dbg_wcr_set_bas(wcr, convertSizeToArch(size) << offset);
         wcr = dbg_wcr_set_lsc(wcr, convertAccessToArch(rw));
         wcr = dbg_wcr_set_watchpointType(wcr, 0);
         wcr = dbg_wcr_set_lbn(wcr, 0);
@@ -474,7 +472,7 @@ int getAndResetActiveBreakpoint(word_t vaddr, word_t reason)
             
             /* Check if the BAS set for this watchpoint corresponds to this vaddr */
             int offset = vaddr & 0x7;
-            if ((dbg_wcr_get_bas(wcr) & (1 << offset)) == 0) {
+            if ((dbg_wcr_get_bas(wcr) & BIT(offset) == 0) {
                 continue;
             }
 
